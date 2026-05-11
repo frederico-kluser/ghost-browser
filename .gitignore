@@ -1,0 +1,23 @@
+# Python
+*.pyc
+__pycache__/
+.venv/
+venv/
+.camoufox-venv/
+
+# Perfis temporários residuais (se o trap não rodar)
+/tmp/cbrowser-*
+/tmp/cfox-*
+
+# SO
+.DS_Store
+Thumbs.db
+
+# Editores
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Logs
+*.log
