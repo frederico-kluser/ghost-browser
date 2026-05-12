@@ -1,156 +1,82 @@
-# FIXES — correções pendentes (temporário)
+# FIXES — histórico de bugs corrigidos
 
-> Documento temporário com os 2 problemas detectados na instalação atual,
-> a análise de causa raiz, o que já foi corrigido no `install.sh` e o que
-> ainda precisa de ação manual. Deletar quando ambos estiverem `[+]` no
-> resumo do `install.sh`.
-
----
-
-## Resumo da instalação atual
-
-```
-================ RESUMO DA INSTALAÇÃO ================
-[+] venv: /home/ondokai/.camoufox-venv criado
-[+] pip: camoufox[geoip] instalado/atualizado
-[+] camoufox: binário Firefox patched + dataset GeoIP
-[=] apt: tor / curl / jq / netcat-openbsd / python3-pip / python3-venv
-[=] apt: libdbus-glib-1-2 / libx11-xcb1 / libasound2t64 / libgtk-3-0t64
-[=] serviço: tor já habilitado
-[!] chromium-family: não instalado (sem snap)
-[!] tor: saída SOCKS5 não confirmada
-======================================================
-```
-
-Diagnóstico: **um falso positivo + uma instalação faltando**.
+> Documento de histórico. Os 3 bugs originais que motivaram este arquivo já estão
+> **todos fechados** no código. Mantido como changelog técnico — útil pra futuras
+> investigações se alguma regressão aparecer.
+>
+> Quer limpar o repo? Pode deletar este arquivo a qualquer momento.
 
 ---
 
-## Bug 1 — `tor: saída SOCKS5 não confirmada` (FALSO POSITIVO)
+## Status atual (12/05/2026)
 
-### Sintoma
-Resumo marca Tor como falha apesar de `systemctl is-active tor@default` retornar `active`, porta `9050` em `LISTEN` e bootstrap em `100% (done)`.
+| # | Bug | Status |
+|---|---|---|
+| 1 | Teste de Tor no `install.sh` retornando falso negativo via `ipinfo.io` | ✅ FECHADO |
+| 2 | `chromium-family não instalado` em Pop!_OS sem snap | ✅ FECHADO |
+| 3 | `TypeError: launch() got unexpected kwarg 'user_data_dir'` (Camoufox 0.4.11) | ✅ FECHADO |
+| — | Suporte macOS (não bug, evolução) | ✅ ADICIONADO via `lib/platform.sh` |
+
+---
+
+## Bug 1 — `ipinfo.io` como teste de Tor (FALSO POSITIVO)
+
+### Sintoma original
+Resumo do `install.sh` reportava `[!] tor: saída SOCKS5 não confirmada` apesar de Tor 100% bootstrapped, porta 9050 em LISTEN e bootstrap log mostrando "Bootstrapped 100% (done)".
 
 ### Causa raiz
-O teste antigo em `install.sh` usava `https://ipinfo.io/json`. **Cloudflare (na frente do ipinfo.io) serve body vazio com HTTP 200 quando a origem é exit node Tor.** Resultado: `curl` retorna `exit=0` mas body vazio → `jq -e .` falha em entrada vazia → resumo conclui falha mesmo com Tor 100% saudável.
+Cloudflare (na frente do `ipinfo.io`) serve **body vazio com HTTP 200** quando origem é exit node Tor. `curl` retorna `exit=0` mas sem output → `jq -e .` falha em entrada vazia → teste conclui falha mesmo com Tor saudável.
 
-Reproduzido localmente:
+Reproduzido:
 ```bash
 $ curl -s --max-time 10 --socks5-hostname 127.0.0.1:9050 https://ipinfo.io/json
-$                                           # (vazio, exit=0)
+$                                            # (vazio, exit=0)
 
 $ curl -s --max-time 15 --socks5-hostname 127.0.0.1:9050 https://check.torproject.org/api/ip
-{"IsTor":true,"IP":"107.189.5.121"}        # (ok)
+{"IsTor":true,"IP":"107.189.5.121"}         # (ok)
 ```
 
-### Fix aplicado em `install.sh`
-Substituí o teste por uma tentativa em cadeia com endpoints Tor-friendly:
+### Fix
+`install.sh:229-249` agora tenta endpoints Tor-friendly em cadeia:
 
-1. `https://check.torproject.org/api/ip` — purpose-built para detecção Tor, nunca bloqueia
-2. `https://api.ipify.org?format=json` — plain-text/JSON IP, raramente bloqueado
+1. `https://check.torproject.org/api/ip` — purpose-built pra detectar Tor, nunca bloqueia.
+2. `https://api.ipify.org?format=json` — plain JSON, raramente bloqueado.
 
 Considera OK se **qualquer** retornar body não-vazio em até 15s.
 
-```bash
-# install.sh — bloco já editado
-for ep in "https://check.torproject.org/api/ip" "https://api.ipify.org?format=json"; do
-    if RESP=$(curl -s --max-time 15 --socks5-hostname 127.0.0.1:9050 "$ep" 2>/dev/null) \
-            && [[ -n "$RESP" ]]; then
-        TOR_OK=1; TOR_RESULT="$ep → $RESP"; break
-    fi
-done
-```
-
 ### Status
-✅ **Corrigido**. Rodando `./install.sh` de novo, este item vai pra `[+]`.
+✅ **Fechado**. Confirmado via `curl` direto retornando `{"IsTor":true,"IP":"107.189.5.121"}`.
 
 ---
 
-## Bug 2 — `chromium-family: não instalado` (INSTALAÇÃO FALTANDO)
+## Bug 2 — `chromium-family: não instalado` (Pop!_OS sem snap)
 
-### Sintoma
-Em Pop!_OS sem `snapd`, nenhum Chromium/Chrome/Brave foi instalado. `./spoof-browser.sh` (Caminho A) não funciona.
+### Sintoma original
+Em Pop!_OS sem `snapd`, nenhum Chromium/Chrome/Brave foi instalado. `./spoof-browser.sh` (Caminho A) não funcionava.
 
 ### Causa raiz
 - Pop!_OS não vem com `snapd` por design (System76 prefere flatpak).
-- Ubuntu Noble removeu `chromium-browser` dos repositórios apt nativos (transitional para snap).
-- `install.sh` antigo só avisava e seguia.
+- Ubuntu Noble removeu `chromium-browser` dos repos apt nativos.
+- `install.sh` original só avisava e seguia.
 
-### Fix aplicado em `install.sh`
-Quando snap está ausente, agora **instala Brave automaticamente** via repositório apt oficial (Brave é Chromium-based, já detectado por `spoof-browser.sh:32`, tem `.deb` mantido oficialmente):
+### Fix
+`install.sh:115-166` agora:
 
-```bash
-# install.sh — bloco já editado (resumo)
-sudo curl -fsSLo /usr/share/keyrings/brave-browser-archive-keyring.gpg \
-    https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg] https://brave-browser-apt-release.s3.brave.com/ stable main" \
-    | sudo tee /etc/apt/sources.list.d/brave-browser-release.list
-sudo apt update -qq
-sudo apt install -y brave-browser
-```
+1. **Já tem Chromium-family?** Pula (`SKIPPED`).
+2. **macOS?** Instala `chromium` via `brew install --cask chromium`.
+3. **Linux com snap?** `sudo apt install chromium-browser` (snap transitional).
+4. **Linux sem snap?** Adiciona repo apt oficial da Brave, instala `brave-browser`.
+
+A rota Brave-via-repo-oficial é a mais portável fora do mundo snap/flatpak e tem `.deb` mantido upstream.
 
 ### Status
-⏳ **Pendente ação do usuário**. O classificador automático do Claude Code bloqueia adição de repo apt de terceiros sem autorização explícita. Três caminhos:
-
-#### Opção A — Re-rodar `./install.sh` (mais simples)
-```bash
-./install.sh
-```
-Ele detecta ausência de snap, baixa chave, adiciona repo, instala Brave. Vai pedir sudo uma vez.
-
-#### Opção B — Snippet manual (se quiser entender cada passo)
-```bash
-sudo curl -fsSLo /usr/share/keyrings/brave-browser-archive-keyring.gpg \
-  https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg && \
-echo "deb [signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg] https://brave-browser-apt-release.s3.brave.com/ stable main" | \
-  sudo tee /etc/apt/sources.list.d/brave-browser-release.list >/dev/null && \
-sudo apt update -qq && sudo apt install -y brave-browser
-```
-
-#### Opção C — Flatpak (sem repo apt system-wide)
-Pop!_OS já tem flatpak instalado. Custo: `spoof-browser.sh:29-37` não detecta apps flatpak (chama `brave-browser` por nome de binário, não `flatpak run com.brave.Browser`), então precisaria de patch.
-
-```bash
-flatpak install --user -y flathub com.brave.Browser
-# + patch em spoof-browser.sh (não recomendado)
-```
-
-#### Opção D — Pular (se só usa `./ghost.sh`)
-Se sua meta é só cadastrar contas (caso de uso original), **Caminho A é irrelevante**:
-- `./ghost.sh` usa Camoufox (Caminho B), fingerprint coerente, Trust >70% em CreepJS.
-- Caminho A só serve pra perfis mobile (iPhone/Android UA), que são detectados como inconsistentes de qualquer jeito.
-- Decisão honesta: **deletar este FIXES.md e seguir com ghost.sh**.
+✅ **Fechado**. `uninstall.sh:92-99` também sabe limpar o repo + chave GPG da Brave se foi instalado por nós.
 
 ---
 
-## Como reavaliar depois
+## Bug 3 — `TypeError: launch() got unexpected kwarg 'user_data_dir'` (Camoufox 0.4.11)
 
-Rodando `./install.sh` (ou aplicando Opção B), o resumo final esperado:
-
-```
-[+] tor: saída SOCKS5 confirmada (https://check.torproject.org/api/ip → {"IsTor":true,...})
-[+] apt: brave-browser (via repo oficial Brave)
-```
-
-Ambos os `[!]` viram `[+]`. Aí pode `rm FIXES.md`.
-
-Se mesmo após o re-run algum item continuar em `[!]`, diagnósticos rápidos:
-
-| Item | Comando de diagnóstico |
-|---|---|
-| Tor SOCKS5 | `curl -s --socks5-hostname 127.0.0.1:9050 https://check.torproject.org/api/ip` |
-| Tor bootstrap | `journalctl -u tor@default --no-pager \| grep Bootstrap \| tail -5` |
-| Tor porta | `ss -tlnp \| grep 9050` |
-| Brave | `command -v brave-browser && brave-browser --version` |
-| Repo Brave ativo | `cat /etc/apt/sources.list.d/brave-browser-release.list` |
-
----
-
-## Bug 3 — `TypeError: launch() got unexpected kwarg 'user_data_dir'` (RUNTIME)
-
-### Sintoma
-Ao rodar `./ghost.sh`, depois de pegar IP Tor novo e tentar abrir Camoufox:
-
+### Sintoma original
 ```
 File "camoufox/sync_api.py", line 94, in NewBrowser
     browser = playwright.firefox.launch(**from_options)
@@ -160,71 +86,65 @@ TypeError: BrowserType.launch() got an unexpected keyword argument 'user_data_di
 ### Causa raiz
 Camoufox 0.4.11 escolhe qual método Playwright chamar baseado em `persistent_context`:
 
-| `persistent_context` | método Playwright | aceita `user_data_dir`? |
+| `persistent_context` | Playwright method | aceita `user_data_dir`? |
 |---|---|---|
-| `False` (default) | `firefox.launch(**from_options)` | **NÃO** |
-| `True` | `firefox.launch_persistent_context(**from_options)` | SIM |
+| `False` (default) | `firefox.launch()` | **NÃO** |
+| `True` | `firefox.launch_persistent_context()` | SIM |
 
-Tanto `ghost.sh` quanto o `camoufox-spoof.sh` original passavam `user_data_dir=UDD` **junto** com `persistent_context=False`. Camoufox encaminha todos os kwargs sem filtrar, e o Playwright rejeita o arg incompatível.
+Tanto `ghost.sh` quanto `camoufox-spoof.sh` passavam `user_data_dir=UDD` com `persistent_context=False` — combinação inválida.
 
-Verificado lendo `~/.camoufox-venv/lib/python3.12/site-packages/camoufox/sync_api.py:85-93`:
+### Fix
+Ambos scripts: `persistent_context=True`. Em `ghost.sh`, também trocado `page.wait_for_event("close")` por `browser.wait_for_event("close")` (no contexto), que dispara quando o navegador inteiro encerra.
 
-```python
-# Persistent context
-if persistent_context:
-    context = playwright.firefox.launch_persistent_context(**from_options)
-    return sync_attach_vd(context, virtual_display)
-
-# Browser
-browser = playwright.firefox.launch(**from_options)
-return sync_attach_vd(browser, virtual_display)
-```
-
-### Fix aplicado
-Em ambos `ghost.sh` e `camoufox-spoof.sh`:
-
-```python
-with Camoufox(
-    ...
-    user_data_dir=UDD,
-    persistent_context=True,   # <- era False
-    ...
-) as browser:
-    # browser agora é BrowserContext (não Browser). BrowserContext.new_page() funciona igual.
-    page = browser.new_page()
-```
-
-Em `ghost.sh`, também substituí `page.wait_for_event("close")` por `browser.wait_for_event("close")` (no contexto), que dispara quando o navegador inteiro fecha — não só uma aba.
-
-**Cleanup descartável continua intacto**: o perfil persistente fica em `$TMP` (`/tmp/ghost-XXXXXX`), e o `trap cleanup INT TERM HUP EXIT` do bash apaga `$TMP` de qualquer forma. "Persistent" no nome do método é só sobre Playwright manter estado entre páginas dentro do **mesmo run**, não entre runs.
+**Cleanup descartável segue intacto**: o perfil persistente vive em `$TMP` (`/tmp/ghost-XXXXXX` no Linux, `$TMPDIR/ghost-XXXXXX` no macOS), e o `trap cleanup INT TERM HUP EXIT` apaga `$TMP` na saída de qualquer condição.
 
 ### Validação
 Smoke test headless em Camoufox 0.4.11:
-
 ```bash
 $ python -c "
 from camoufox.sync_api import Camoufox
 from browserforge.fingerprints import Screen
-import tempfile, pathlib
+import tempfile
 tmp = tempfile.mkdtemp()
 with Camoufox(os='linux', headless=True, user_data_dir=tmp,
               persistent_context=True,
               firefox_user_prefs={'permissions.default.geo': 2}) as ctx:
-    page = ctx.new_page()
-    page.goto('about:blank')
-    print('OK', page.title())
+    ctx.new_page().goto('about:blank')
+    print('OK')
 "
 OK
 ```
 
 ### Status
-✅ **Corrigido em ghost.sh e camoufox-spoof.sh**. Rodar `./ghost.sh` agora deve abrir o navegador normalmente.
+✅ **Fechado** em `ghost.sh` e `camoufox-spoof.sh`.
 
 ---
 
-## Arquivos tocados pelos fixes
+## Adição — suporte macOS via `lib/platform.sh`
 
-- `install.sh` — 2 blocos editados (teste Tor + fallback Chromium-family).
-- `ghost.sh` — `persistent_context=True` + `browser.wait_for_event` em vez de `page.wait_for_event`.
-- `camoufox-spoof.sh` — `persistent_context=True`.
-- `spoof-browser.sh`, `new-tor-circuit.sh`, `uninstall.sh` — não afetados.
+Não foi um bug, mas vale registrar: depois dos 3 fixes acima, o projeto ganhou suporte macOS através de uma camada de abstração (`lib/platform.sh`) que normaliza diferenças entre Linux e macOS:
+
+- Detecção de S.O. (`ghost_os`)
+- Gerenciador de pacotes (`ghost_pkg_*` → `apt` ou `brew`)
+- Casks brew (`ghost_cask_*` → só macOS)
+- Serviços (`ghost_service_*` → `systemctl` ou `brew services`)
+- Caminho do Tor (`ghost_chrome_binary`, `ghost_camoufox_cache_dirs`, `ghost_tor_config_path`, `ghost_tmp_prefix`)
+
+Compatibilidade: bash 3.2 portable (sem `mapfile`, `${var,,}`, ou arrays associativos — `/bin/bash` no macOS é 3.2.57).
+
+Todos os scripts do projeto (`install.sh`, `uninstall.sh`, `ghost.sh`, `camoufox-spoof.sh`, `spoof-browser.sh`, `new-tor-circuit.sh`) agora fazem `source "$SCRIPT_DIR/lib/platform.sh"`.
+
+---
+
+## Como diagnosticar se algo voltar a quebrar
+
+| Item | Comando |
+|---|---|
+| Tor SOCKS5 | `curl -s --socks5-hostname 127.0.0.1:9050 https://check.torproject.org/api/ip` |
+| Tor bootstrap (Linux) | `journalctl -u tor@default --no-pager \| grep Bootstrap \| tail -5` |
+| Tor bootstrap (macOS) | `log show --predicate 'process == "tor"' --last 5m` |
+| Tor porta | `nc -z -w 2 127.0.0.1 9050 && echo open \|\| echo closed` |
+| Browser detectado | `ghost_chrome_binary` (após `source lib/platform.sh`) |
+| Camoufox version | `~/.camoufox-venv/bin/pip show camoufox \| grep Version` |
+| Repo Brave (Linux) | `cat /etc/apt/sources.list.d/brave-browser-release.list` |
+| Cache Camoufox (macOS) | `ls -la ~/Library/Caches/camoufox/` |

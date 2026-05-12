@@ -14,7 +14,7 @@
 # Para spoofing coerente que passa em CreepJS, use ./camoufox-spoof.sh.
 #
 # Licença: MIT — veja LICENSE
-# Repo:    https://github.com/ondokai/ghost-browser  (placeholder)
+# Repo:    https://github.com/frederico-kluser/ghost-browser
 
 set -euo pipefail
 

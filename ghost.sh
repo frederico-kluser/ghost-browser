@@ -17,6 +17,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/platform.sh
+source "$SCRIPT_DIR/lib/platform.sh"
+
 VENV="$HOME/.camoufox-venv"
 
 # -------- cleanup robusto: INT, TERM, HUP, EXIT --------
@@ -29,6 +32,8 @@ cleanup() {
 trap cleanup INT TERM HUP EXIT
 
 # -------- pré-checks --------
+OS_KIND="$(ghost_os)" || { echo "[!] S.O. não suportado"; exit 1; }
+
 if [[ ! -d "$VENV" ]]; then
     echo "[!] venv Camoufox não encontrado em $VENV"
     echo "    Rode primeiro: ./install.sh"
@@ -38,6 +43,13 @@ fi
 if [[ ! -x "$SCRIPT_DIR/new-tor-circuit.sh" ]]; then
     echo "[!] new-tor-circuit.sh não encontrado/executável em $SCRIPT_DIR"
     exit 1
+fi
+
+# Garante Tor rodando antes de pedir circuito novo — evita "desconhecido" no IP.
+if ! ghost_service_is_active tor; then
+    echo "[ghost] iniciando Tor ($OS_KIND)..."
+    ghost_service_start tor 2>/dev/null || true
+    sleep 3
 fi
 
 # -------- pede URL (aceita também via $1) --------
@@ -63,7 +75,8 @@ echo "[ghost] forçando novo circuito Tor..."
 "$SCRIPT_DIR/new-tor-circuit.sh" || true
 
 # -------- perfil descartável --------
-TMP="$(mktemp -d -t ghost-XXXXXX)"
+# Usa $TMPDIR no macOS (/var/folders/.../T); cai pra /tmp no Linux. mktemp aceita.
+TMP="$(mktemp -d "$(ghost_tmp_prefix)/ghost-XXXXXX")"
 echo "[ghost] OS spoof : $OS_RAND"
 echo "[ghost] perfil   : $TMP"
 echo "[ghost] URL      : $URL"

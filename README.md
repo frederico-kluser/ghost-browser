@@ -124,16 +124,15 @@ Remove venv, cache do Camoufox (XDG no Linux ou `~/Library/Caches/camoufox` no m
 
 Cada execução:
 
-1. Força novo circuito Tor (`SIGNAL NEWNYM` se ControlPort estiver aberto, senão reload via init system — `systemctl reload tor` no Linux ou `brew services restart tor` no macOS).
-2. Sorteia OS spoofado (`windows` | `macos` | `linux`).
-3. Cria perfil descartável em `/tmp/ghost-XXXXXX`.
-4. Abre Camoufox com fingerprint coerente + Tor + GPS negado.
-5. Bloqueia até você fechar o navegador.
-6. Apaga `/tmp/ghost-XXXXXX` no exit (Ctrl+C, X do terminal, X do navegador, kill, crash — tudo).
+1. Detecta S.O. e inicia o Tor se ele estiver parado (`systemctl start tor` no Linux, `brew services start tor` no macOS).
+2. Força novo circuito Tor (`SIGNAL NEWNYM` se ControlPort estiver aberto, senão reload do serviço).
+3. Sorteia OS spoofado (`windows` | `macos` | `linux`).
+4. Cria perfil descartável em `$TMPDIR/ghost-XXXXXX` (`/tmp/...` no Linux, `/var/folders/.../ghost-...` no macOS).
+5. Abre Camoufox com fingerprint coerente + Tor + GPS negado silenciosamente.
+6. Bloqueia até você fechar o navegador.
+7. Apaga o perfil no exit (Ctrl+C, X do terminal, X do navegador, kill, crash — tudo).
 
-Variáveis de ambiente úteis (opcional):
-
-- `USE_TOR=0 ./ghost.sh ...` — pula Tor (útil pra testar localmente). Não rola no `ghost.sh` atual, mas funciona no `camoufox-spoof.sh` se preferir.
+Pra pular o Tor (testes locais), use `USE_TOR=0 ./camoufox-spoof.sh <os> <url>` — o `ghost.sh` é Tor-first por design.
 
 ### Caminhos alternativos
 
@@ -234,11 +233,9 @@ ghost-browser/
 
 ## Bugs conhecidos
 
-Veja [FIXES.md](FIXES.md). Hoje (12/05/2026), três bugs documentados, todos corrigidos no código:
+Nenhum em aberto até 12/05/2026. Os 3 bugs originais (teste de Tor com `ipinfo.io`, ausência de Chromium em Pop!_OS sem snap, `TypeError` do Camoufox 0.4.11) estão **todos fechados** — histórico técnico completo em [FIXES.md](FIXES.md).
 
-1. Teste do Tor no `install.sh` usava `ipinfo.io` (que Cloudflare bloqueia pra exits) → falso negativo. **Fixado** com fallback pra `check.torproject.org`.
-2. `chromium-family não instalado` em Pop!_OS sem snap → install.sh agora adiciona repo apt da Brave automaticamente. **Fixado** (precisa aprovar `sudo` no primeiro run).
-3. `TypeError: launch() got unexpected kwarg 'user_data_dir'` em Camoufox 0.4.11 → faltava `persistent_context=True`. **Fixado** em `ghost.sh` e `camoufox-spoof.sh`.
+Se algo quebrar depois de uma atualização do Camoufox, Firefox ou Tor: abra issue no GitHub com o stacktrace e o resumo do `./install.sh`.
 
 ---
 
