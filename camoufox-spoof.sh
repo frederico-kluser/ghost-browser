@@ -18,6 +18,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/platform.sh
+source "$SCRIPT_DIR/lib/platform.sh"
+
 VENV="$HOME/.camoufox-venv"
 PROFILE="${1:-windows}"
 URL="${2:-https://abrahamjuliot.github.io/creepjs/}"
@@ -42,9 +46,9 @@ echo "[*] Perfil temporário: $TMP"
 trap 'echo "[*] Apagando perfil..."; rm -rf "$TMP"' EXIT INT TERM
 
 if [[ "$USE_TOR" == "1" ]]; then
-  if ! systemctl is-active --quiet tor; then
+  if ! ghost_service_is_active tor; then
     echo "[*] Iniciando serviço tor..."
-    sudo systemctl start tor 2>/dev/null || true
+    ghost_service_start tor 2>/dev/null || true
     sleep 2
   fi
   echo "[*] Testando saída Tor:"

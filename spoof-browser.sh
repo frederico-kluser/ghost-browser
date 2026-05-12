@@ -18,20 +18,22 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/platform.sh
+source "$SCRIPT_DIR/lib/platform.sh"
+
 PROXY="socks5://127.0.0.1:9050"
 URL="${2:-https://browserleaks.com}"
 PROFILE="${1:-windows-chrome}"
 
 # Permite "--no-proxy" como terceiro argumento (desliga Tor)
-[[ "${3:-}" == "--no-proxy" ]] && PROXY=""
+if [[ "${3:-}" == "--no-proxy" ]]; then PROXY=""; fi
 
-# Detecta binário do Chromium (chromium-browser no Ubuntu, chromium no Debian/Arch)
-if   command -v chromium-browser >/dev/null 2>&1; then BROWSER="chromium-browser"
-elif command -v chromium         >/dev/null 2>&1; then BROWSER="chromium"
-elif command -v google-chrome    >/dev/null 2>&1; then BROWSER="google-chrome"
-elif command -v brave-browser    >/dev/null 2>&1; then BROWSER="brave-browser"
-else
-    echo "[!] Nenhum Chromium/Chrome/Brave encontrado no PATH."
+# Detecta binário Chromium-family — no Linux retorna nome curto, no macOS
+# retorna caminho absoluto (com espaço em "Brave Browser"). exec "$BROWSER"
+# lida com ambos.
+if ! BROWSER="$(ghost_chrome_binary)"; then
+    echo "[!] Nenhum Chromium/Chrome/Brave/Edge encontrado."
     echo "    Rode primeiro: ./install.sh"
     exit 1
 fi
@@ -75,9 +77,9 @@ trap 'echo "[*] Apagando perfil..."; rm -rf "$TMP_PROFILE"' EXIT INT TERM
 
 # -------- garante Tor up se for usar proxy --------
 if [[ -n "$PROXY" ]]; then
-  if ! systemctl is-active --quiet tor; then
+  if ! ghost_service_is_active tor; then
     echo "[*] Iniciando serviço tor..."
-    sudo systemctl start tor
+    ghost_service_start tor
     sleep 3
   fi
   echo "[*] Testando saída Tor:"

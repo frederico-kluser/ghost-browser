@@ -67,22 +67,40 @@ E o que **não** dá pra resolver com esta stack — sendo honesto:
 
 ## Instalação
 
-Ubuntu/Debian/Pop!_OS 22.04+. Precisa de `sudo` na primeira execução.
+Funciona em **Ubuntu/Debian/Pop!_OS 22.04+** (via `apt`) e **macOS 13+** (via Homebrew). O `install.sh` detecta o S.O. automaticamente — mesmo comando nos dois:
 
 ```bash
 ./install.sh
 ```
 
+### Requisitos por S.O.
+
+**Linux** — usa `sudo` na primeira execução para `apt` e `systemctl`.
+
+**macOS** — requer [Homebrew](https://brew.sh) **pré-instalado**; o `install.sh` orienta o usuário caso esteja faltando. Não usa `sudo` (brew dispensa root).
+
 O `install.sh` é idempotente e fala muito. Ele instala (só o que falta):
 
-- `tor` (proxy SOCKS5 + serviço systemd)
-- `chromium`/`brave-browser` — em sistemas com `snapd` instala Chromium do snap; em **Pop!_OS / Debian sem snap** baixa a chave GPG oficial da Brave e adiciona `https://brave-browser-apt-release.s3.brave.com` como source apt
-- libs nativas do Camoufox (`libgtk-3-0t64`, `libasound2t64`, `libdbus-glib-1-2`, `libx11-xcb1`)
+- `tor` (proxy SOCKS5 em `127.0.0.1:9050`) — serviço `systemd` no Linux, `brew services` no macOS
+- Um navegador Chromium-family — em Linux com `snapd`, instala Chromium do snap; em Pop!_OS/Debian sem snap, baixa chave GPG oficial da Brave e adiciona o repo apt; em macOS, instala `chromium` via Homebrew Cask se nenhum (Chromium/Brave/Chrome/Edge) já estiver em `/Applications`
+- Linux apenas: libs nativas do Camoufox (`libgtk-3-0t64`, `libasound2t64`, `libdbus-glib-1-2`, `libx11-xcb1`). macOS dispensa — Camoufox usa Firefox Cocoa nativo
 - venv Python em `~/.camoufox-venv` com `camoufox[geoip]`
 - binário Camoufox (Firefox patched) + dataset GeoIP (~300 MB)
 - valida saída Tor em endpoints Tor-friendly (`check.torproject.org`, `api.ipify.org`)
 
 No fim, imprime um **resumo categorizado**: `[+]` instalado agora, `[=]` já presente, `[!]` falhou. Se algo está em `[!]`, [veja FIXES.md](FIXES.md) para diagnóstico.
+
+### Configuração do ControlPort do Tor (opcional, mas recomendado)
+
+Sem ControlPort 9051, `new-tor-circuit.sh` cai para um reload do serviço Tor — funciona mas é mais lento e fecha conexões em andamento. Para habilitar a troca rápida de circuito:
+
+- **Linux**: edite `/etc/tor/torrc` adicionando `ControlPort 9051` + `CookieAuthentication 0`, depois `sudo systemctl restart tor`.
+- **macOS**: `brew install tor` deixa apenas `torrc.sample`. Crie o `torrc` primeiro:
+  ```bash
+  cp "$(brew --prefix)/etc/tor/torrc.sample" "$(brew --prefix)/etc/tor/torrc"
+  printf '\nControlPort 9051\nCookieAuthentication 0\n' >> "$(brew --prefix)/etc/tor/torrc"
+  brew services restart tor
+  ```
 
 Reverter tudo:
 
@@ -90,7 +108,7 @@ Reverter tudo:
 ./uninstall.sh
 ```
 
-Remove venv, cache do Camoufox, perfis em `/tmp/ghost-*`, e pergunta antes de remover pacotes apt (só o que foi rastreado em `~/.cache/ghost-browser/installed-pkgs`). Se Brave foi instalado pelo nosso repo, também limpa o source list e a chave GPG.
+Remove venv, cache do Camoufox (XDG no Linux ou `~/Library/Caches/camoufox` no macOS), perfis temporários, e pergunta antes de remover pacotes (só o que foi rastreado em `~/.cache/ghost-browser/installed-pkgs`). Se Brave foi instalado por nós no Linux, também limpa o source list apt e a chave GPG. No macOS, casks instalados por nós (ex.: `chromium`) também são removidos.
 
 ---
 
@@ -106,7 +124,7 @@ Remove venv, cache do Camoufox, perfis em `/tmp/ghost-*`, e pergunta antes de re
 
 Cada execução:
 
-1. Força novo circuito Tor (`SIGNAL NEWNYM` se ControlPort estiver aberto, senão `systemctl reload tor`).
+1. Força novo circuito Tor (`SIGNAL NEWNYM` se ControlPort estiver aberto, senão reload via init system — `systemctl reload tor` no Linux ou `brew services restart tor` no macOS).
 2. Sorteia OS spoofado (`windows` | `macos` | `linux`).
 3. Cria perfil descartável em `/tmp/ghost-XXXXXX`.
 4. Abre Camoufox com fingerprint coerente + Tor + GPS negado.
@@ -121,7 +139,7 @@ Variáveis de ambiente úteis (opcional):
 
 - **`./camoufox-spoof.sh <windows|macos|linux> [url]`** — mesma engine do `ghost.sh`, sem OS aleatório, sem prompt; espera ENTER no terminal pra encerrar. Útil pra pinar OS.
 - **`./spoof-browser.sh <perfil> [url] [--no-proxy]`** — Caminho A, leve, Chromium/Brave + UA spoof. 8 perfis (`windows-chrome`, `macos-safari`, `iphone-safari`, `galaxy-s24`, etc.). Não tem fingerprint coerente — vai vazar `navigator.platform=Linux` em CreepJS. Útil pra perfis mobile (detectáveis, mas existem).
-- **`./new-tor-circuit.sh`** — força IP novo entre execuções. Já é chamado pelo `ghost.sh`. Pra rodar standalone, abra `ControlPort 9051` no `/etc/tor/torrc` (a mensagem do script ensina).
+- **`./new-tor-circuit.sh`** — força IP novo entre execuções. Já é chamado pelo `ghost.sh`. Pra rodar standalone, abra `ControlPort 9051` no torrc (caminho depende do S.O. — Linux: `/etc/tor/torrc`; macOS: `$(brew --prefix)/etc/tor/torrc`). Veja a seção "Configuração do ControlPort do Tor" acima.
 
 ---
 
@@ -177,12 +195,13 @@ ghost-browser/
 ├── FIXES.md               # bugs conhecidos + workarounds atuais
 ├── LICENSE                # MIT
 ├── .gitignore
-├── install.sh             # apt + venv + camoufox fetch + Brave (auto, sem snap)
-├── uninstall.sh           # remove venv/cache; pergunta sobre apt; limpa repo Brave
+├── install.sh             # auto-detecta S.O. — apt+Brave repo no Linux, brew+cask no macOS
+├── uninstall.sh           # remove venv/cache; pergunta sobre pacotes; limpa repos do Linux
 ├── ghost.sh               # ★ super-comando: pergunta URL, OS aleatório, GPS negado, cleanup total
 ├── camoufox-spoof.sh      # Caminho B manual (escolhe OS, ENTER pra fechar)
 ├── spoof-browser.sh       # Caminho A (Chromium/Brave + UA spoof, 8 perfis incl. mobile)
-└── new-tor-circuit.sh     # força SIGNAL NEWNYM (ControlPort 9051) ou systemctl reload
+├── new-tor-circuit.sh     # força SIGNAL NEWNYM (ControlPort 9051) ou reload do serviço
+└── lib/platform.sh        # detecção de S.O. + helpers brew/apt/systemd/launchd
 ```
 
 ---
