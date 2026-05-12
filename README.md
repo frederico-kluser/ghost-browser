@@ -1,202 +1,252 @@
 # ghost-browser
 
-> Navegador Linux **isolado, descartável e com IP + fingerprint trocados**, via scripts `.sh`.
+> **Sua sessão. Seu IP. Seu fingerprint. Sua escolha.**
+>
+> Um navegador descartável, isolado, com IP rotacionado pelo Tor e fingerprint coerente trocado em nível C++. Linux. Bash. Sem telemetria. Sem conta. Sem rastro.
 
-Dois caminhos lado a lado: um leve (Chromium + UA spoof) e um sério (Camoufox, que troca `navigator`, `screen`, `WebGL`, `canvas`, `audio`, fontes, `timezone` e geolocalização de forma coerente em nível C++).
+```bash
+./install.sh   # uma vez
+./ghost.sh     # toda vez que você quiser uma identidade nova
+```
+
+---
+
+## Por que isto existe
+
+A web de 2026 não te trata como visitante. Te trata como **target**. Cada `fetch()` que seu browser faz num site arbitrário sai com:
+
+- IP público (resolvível pra cidade, ISP, AS, e muitas vezes pra você como pessoa)
+- Canvas hash, WebGL renderer, audio fingerprint, lista de fontes, screen + colorDepth, `Intl.timeZone`, `navigator.platform`, Client Hints, `userAgentData.brands`
+- Cookies, localStorage, IndexedDB, ServiceWorker caches, ETags persistentes
+- TLS JA3/JA4, HTTP/2 SETTINGS frame fingerprint, ordem de headers
+
+Combinando esses sinais, um único site identifica você unicamente em **>99% das visitas** ([Panopticlick](https://amiunique.org), [FingerprintJS](https://fingerprint.com)). Cookie-clearing, modo anônimo e VPN básica resolvem **nenhum** dos vetores acima.
+
+**ghost-browser** é o oposto político disso: uma stack curta de scripts shell que monta, antes de cada sessão, uma máquina virtual de identidade — IP, fingerprint, locale, geo, timezone — coerente o suficiente pra passar em CreepJS com Trust >70% e descartável o suficiente pra desaparecer no `Ctrl+C`.
+
+Isso não é furtar. Isso é **se recusar a pagar com seus dados** o pedágio que sites cobram pra te deixar entrar. É o mesmo princípio das listas de domínio do uBlock Origin, do Tor Project, do EFF Privacy Badger, do Mullvad VPN: na ausência de uma lei honesta de privacidade, você se defende sozinho.
+
+> "Privacy is necessary for an open society in the electronic age. Privacy is not secrecy."
+> — Eric Hughes, *A Cypherpunk's Manifesto* (1993)
 
 ---
 
 ## TL;DR
 
 ```bash
-./install.sh                              # instala Tor + Chromium + Camoufox
-./spoof-browser.sh windows-chrome         # Caminho A — leve, falso de Windows via Tor
-./camoufox-spoof.sh macos                 # Caminho B — fingerprint coerente de macOS via Tor
+git clone https://github.com/frederico-kluser/ghost-browser
+cd ghost-browser
+./install.sh
+./ghost.sh
 ```
+
+`ghost.sh` te pergunta a URL, sorteia um OS pra spoofar (windows/macos/linux), força um novo circuito Tor, abre um Firefox-patched (Camoufox) com fingerprint coerente, **nega GPS silenciosamente** e apaga tudo (perfil temporário, browser, processo) no momento que você fecha o navegador, dá Ctrl+C ou fecha o terminal.
+
+---
+
+## O que rola debaixo do capô
+
+| Vetor | Defesa |
+|---|---|
+| IP / ASN / geo | Tor SOCKS5 em `127.0.0.1:9050`, novo circuito por sessão via `new-tor-circuit.sh` |
+| Cookies, storage, cache | Perfil em `mktemp -d`, apagado por `trap INT TERM HUP EXIT` |
+| Canvas / WebGL / Audio / Fonts | Camoufox patcha em C++ (Firefox fork da [BrowserForge](https://github.com/daijro/camoufox)) |
+| `navigator.platform`, Client Hints, `userAgentData` | Camoufox `os="windows"\|"macos"\|"linux"` — coerentes entre si |
+| `Intl.timeZone`, `navigator.language` | Camoufox `geoip=True` → bate com cidade do exit Tor (dataset MaxMind) |
+| WebRTC IP leak | Camoufox `block_webrtc=True` (default) |
+| HTML5 Geolocation API | `firefox_user_prefs={"permissions.default.geo": 2}` → site recebe `PERMISSION_DENIED` sem prompt |
+| Botão "X" do navegador | `BrowserContext.wait_for_event("close")` → encerra script + apaga perfil |
+
+E o que **não** dá pra resolver com esta stack — sendo honesto:
+
+- **Anti-bot enterprise** (Cloudflare Bot Management, DataDome, PerimeterX, Kasada). Esses caras analisam TLS JA3, HTTP/2 frame ordering, comportamento de mouse com ML. Camoufox melhora mas não esconde. Se você precisa passar por isso, vai pagar GoLogin, Multilogin, AdsPower — não é missão deste repo.
+- **Mobile fingerprint coerente.** Camoufox só desktop. `spoof-browser.sh` tem perfis iPhone/Android mas CreepJS detecta como inconsistente.
+- **Identidade externa.** Se o site quer SMS/e-mail único, você precisa de [addy.io](https://addy.io), [SimpleLogin](https://simplelogin.io), número descartável. Fora do escopo.
 
 ---
 
 ## Instalação
 
-Requer Ubuntu/Debian 22.04+, com `sudo`.
+Ubuntu/Debian/Pop!_OS 22.04+. Precisa de `sudo` na primeira execução.
 
 ```bash
 ./install.sh
 ```
 
-Isso instala (idempotentemente):
+O `install.sh` é idempotente e fala muito. Ele instala (só o que falta):
 
-- `tor` (proxy SOCKS5 em `127.0.0.1:9050`, serviço systemd)
-- `chromium-browser`, `curl`, `jq`, `netcat-openbsd`
-- Libs nativas do Camoufox (`libgtk-3-0`, `libasound2`, etc.)
-- Um venv Python em `~/.camoufox-venv` com `camoufox[geoip]`
-- O binário Camoufox + dataset GeoIP (~300 MB, baixado por `python -m camoufox fetch`)
+- `tor` (proxy SOCKS5 + serviço systemd)
+- `chromium`/`brave-browser` — em sistemas com `snapd` instala Chromium do snap; em **Pop!_OS / Debian sem snap** baixa a chave GPG oficial da Brave e adiciona `https://brave-browser-apt-release.s3.brave.com` como source apt
+- libs nativas do Camoufox (`libgtk-3-0t64`, `libasound2t64`, `libdbus-glib-1-2`, `libx11-xcb1`)
+- venv Python em `~/.camoufox-venv` com `camoufox[geoip]`
+- binário Camoufox (Firefox patched) + dataset GeoIP (~300 MB)
+- valida saída Tor em endpoints Tor-friendly (`check.torproject.org`, `api.ipify.org`)
 
-Para reverter:
+No fim, imprime um **resumo categorizado**: `[+]` instalado agora, `[=]` já presente, `[!]` falhou. Se algo está em `[!]`, [veja FIXES.md](FIXES.md) para diagnóstico.
+
+Reverter tudo:
 
 ```bash
 ./uninstall.sh
 ```
 
+Remove venv, cache do Camoufox, perfis em `/tmp/ghost-*`, e pergunta antes de remover pacotes apt (só o que foi rastreado em `~/.cache/ghost-browser/installed-pkgs`). Se Brave foi instalado pelo nosso repo, também limpa o source list e a chave GPG.
+
 ---
 
 ## Uso
 
-### Caminho A — `spoof-browser.sh` (Chromium + UA spoof + Tor)
+### Caminho principal — `./ghost.sh`
 
 ```bash
-./spoof-browser.sh <perfil> [url] [--no-proxy]
+./ghost.sh                            # pergunta URL interativamente
+./ghost.sh https://site.com/signup    # one-liner
+./ghost.sh youtube.com                # esquema é opcional, prepende https://
 ```
 
-Exemplos:
+Cada execução:
 
-```bash
-./spoof-browser.sh windows-chrome
-./spoof-browser.sh macos-safari https://abrahamjuliot.github.io/creepjs/
-./spoof-browser.sh galaxy-s24 https://browserleaks.com
-./spoof-browser.sh ubuntu-firefox https://amiunique.org --no-proxy
-```
+1. Força novo circuito Tor (`SIGNAL NEWNYM` se ControlPort estiver aberto, senão `systemctl reload tor`).
+2. Sorteia OS spoofado (`windows` | `macos` | `linux`).
+3. Cria perfil descartável em `/tmp/ghost-XXXXXX`.
+4. Abre Camoufox com fingerprint coerente + Tor + GPS negado.
+5. Bloqueia até você fechar o navegador.
+6. Apaga `/tmp/ghost-XXXXXX` no exit (Ctrl+C, X do terminal, X do navegador, kill, crash — tudo).
 
-O script cria perfil temporário em `mktemp -d`, troca o User-Agent, ajusta `--window-size`, força DNS pelo SOCKS5 para evitar leaks, e remove o perfil ao fechar (`trap EXIT`).
+Variáveis de ambiente úteis (opcional):
 
-### Caminho B — `camoufox-spoof.sh` (Camoufox + Tor, **recomendado**)
+- `USE_TOR=0 ./ghost.sh ...` — pula Tor (útil pra testar localmente). Não rola no `ghost.sh` atual, mas funciona no `camoufox-spoof.sh` se preferir.
 
-```bash
-./camoufox-spoof.sh <perfil> [url]
-USE_TOR=0 ./camoufox-spoof.sh windows     # sem Tor
-```
+### Caminhos alternativos
 
-Exemplos:
-
-```bash
-./camoufox-spoof.sh windows
-./camoufox-spoof.sh macos https://browserleaks.com
-./camoufox-spoof.sh linux https://abrahamjuliot.github.io/creepjs/
-```
-
-Camoufox é um **Firefox patched em C++** que troca o fingerprint inteiro de forma consistente: `navigator.platform`, `navigator.vendor`, `navigator.userAgentData`, `WebGL UNMASKED_VENDOR/RENDERER`, canvas hash, audio fingerprint, lista de fontes, `Intl`, timezone, geolocalização (casada com o IP do Tor via `geoip=True`).
-
-### Forçar novo IP via Tor
-
-Entre execuções, peça ao Tor um novo circuito:
-
-```bash
-./new-tor-circuit.sh
-```
-
-(Usa `ControlPort 9051` se disponível; senão faz `systemctl reload tor`.)
+- **`./camoufox-spoof.sh <windows|macos|linux> [url]`** — mesma engine do `ghost.sh`, sem OS aleatório, sem prompt; espera ENTER no terminal pra encerrar. Útil pra pinar OS.
+- **`./spoof-browser.sh <perfil> [url] [--no-proxy]`** — Caminho A, leve, Chromium/Brave + UA spoof. 8 perfis (`windows-chrome`, `macos-safari`, `iphone-safari`, `galaxy-s24`, etc.). Não tem fingerprint coerente — vai vazar `navigator.platform=Linux` em CreepJS. Útil pra perfis mobile (detectáveis, mas existem).
+- **`./new-tor-circuit.sh`** — força IP novo entre execuções. Já é chamado pelo `ghost.sh`. Pra rodar standalone, abra `ControlPort 9051` no `/etc/tor/torrc` (a mensagem do script ensina).
 
 ---
 
-## Perfis disponíveis
+## Validar que funcionou
 
-### Caminho A (`spoof-browser.sh`) — 8 perfis
-
-| Perfil | User-Agent (resumo) | Resolução | Plataforma alvo |
-|---|---|---|---|
-| `windows-chrome` | Chrome/135 em Windows NT 10 | 1920×1080 | `Win32` |
-| `windows-edge` | Edge/135 em Windows NT 10 | 1920×1080 | `Win32` |
-| `macos-safari` | Safari 17.6 em macOS 10.15.7 | 1440×900 | `MacIntel` |
-| `macos-chrome` | Chrome/135 em macOS 10.15.7 | 1440×900 | `MacIntel` |
-| `ubuntu-firefox` | Firefox 140 em Ubuntu | 1920×1080 | `Linux x86_64` |
-| `iphone-safari` | Safari 26 em iOS 18.6 | 393×852 | `iPhone` |
-| `galaxy-s24` | Chrome/135 em Android 14 | 412×915 | `Linux armv8l` |
-| `ipad-safari` | Safari 17 em iPadOS 18 | 1024×1366 | `iPad` |
-
-> **Nota Chrome/Edge**: desde 2022 o token de Windows ficou congelado em "Windows NT 10.0" mesmo no Windows 11 — a distinção só vai por Client Hints (`Sec-CH-UA-Platform-Version`).
->
-> **Nota Safari**: desde Safari 26 / iOS 26 (set/2025), Apple congelou o token de iOS dentro da UA do Safari em `18_6`.
-
-### Caminho B (`camoufox-spoof.sh`) — 3 perfis
-
-| Perfil | Screen | OS spoofado |
-|---|---|---|
-| `windows` | 1920×1080 | Windows 11 coerente (UA, fonts, WebGL, audio) |
-| `macos` | 2560×1600 | macOS coerente (UA Apple, fontes Apple, etc.) |
-| `linux` | 1920×1080 | Linux coerente (Mesa/llvmpipe, fonts Ubuntu) |
-
-Camoufox **não suporta** mobile (iPhone/Android). Para mobile, use Caminho A — porém ciente que será detectado como inconsistente em CreepJS.
-
----
-
-## Como validar
-
-Depois de abrir o navegador via script, visite **nesta janela**:
+Abre essas URLs **dentro** da janela aberta pelo `ghost.sh`:
 
 | Site | O que checar |
 |---|---|
-| <https://check.torproject.org> | IP diferente do real (badge verde só aparece no Tor Browser oficial; aqui o que importa é o IP) |
-| <https://ipinfo.io/json> | IP / país / ASN de saída do Tor |
-| <https://browserleaks.com/javascript> | `navigator.platform`, `screen`, UA, idioma — devem casar com o perfil |
-| <https://browserleaks.com/webgl> | `UNMASKED_VENDOR/RENDERER` — só Caminho B casa com OS escolhido |
-| <https://browserleaks.com/fonts> | lista de fontes — só Caminho B casa com OS |
-| <https://abrahamjuliot.github.io/creepjs/> | **Trust Score + "Lies"** — Caminho B costuma ter Trust > 70 % e zero lies; Caminho A tem 5–15 lies |
-| <https://amiunique.org/fingerprint> | entropia / unicidade |
-| <https://www.whatismybrowser.com> | parsing humano do UA |
+| [check.torproject.org](https://check.torproject.org) | IP é exit Tor (a badge verde "Congratulations" só aparece no Tor Browser oficial; aqui o que importa é o IP retornado bater com o de saída) |
+| [ipinfo.io/json](https://ipinfo.io/json) | IP, país, ASN do exit |
+| [browserleaks.com/javascript](https://browserleaks.com/javascript) | `navigator.platform`, screen, UA — devem casar com OS sorteado |
+| [browserleaks.com/webgl](https://browserleaks.com/webgl) | `UNMASKED_VENDOR/RENDERER` — Camoufox spoofa coerente |
+| [browserleaks.com/fonts](https://browserleaks.com/fonts) | Lista de fontes do OS spoofado, não do seu Linux real |
+| [browserleaks.com/geo](https://browserleaks.com/geo) | "Permission denied" — GPS negado sem prompt |
+| [abrahamjuliot.github.io/creepjs](https://abrahamjuliot.github.io/creepjs/) | **Trust Score >70% e zero "lies"** — métrica de ouro |
+| [amiunique.org/fingerprint](https://amiunique.org/fingerprint) | Entropia / unicidade |
 
-Validar IP via terminal:
+Validar IP no terminal:
 
 ```bash
-curl --socks5-hostname 127.0.0.1:9050 https://ipinfo.io/json
+curl -s --socks5-hostname 127.0.0.1:9050 https://check.torproject.org/api/ip
+# {"IsTor":true,"IP":"107.189.5.121"}
 ```
 
 ---
 
-## Caminho A vs Caminho B
+## Comparação: Caminho A vs Caminho B vs Tor Browser
 
-| | Caminho A (`spoof-browser.sh`) | Caminho B (`camoufox-spoof.sh`) |
-|---|---|---|
-| Engine | Chromium / Chrome / Brave | Camoufox (Firefox patched) |
-| Dependências | só apt | apt + venv Python (~300 MB) |
-| Troca UA | ✅ | ✅ |
-| Troca `navigator.platform` | ❌ (continua Linux) | ✅ (C++) |
-| Troca WebGL / canvas / audio / fonts | ❌ | ✅ coerente via BrowserForge |
-| Client Hints (`Sec-CH-UA-*`) | ❌ | ✅ |
-| Geo / timezone casados com IP | ❌ | ✅ (`geoip=True`) |
-| Perfis mobile (iPhone/Android) | ✅ (mas detectável) | ❌ não suportado |
-| Passa em CreepJS | ❌ várias "lies" | ✅ Trust > 70 % típico |
-| Velocidade de inicialização | rápido | médio (binário 300 MB) |
+| | Caminho A (`spoof-browser.sh`) | Caminho B (`ghost.sh` / `camoufox-spoof.sh`) | Tor Browser oficial |
+|---|---|---|---|
+| Engine | Chromium / Brave | Camoufox (Firefox patched em C++) | Firefox ESR + patches Tor |
+| Filosofia | Você finge ser outro device | Você finge ser outro device | Você se uniformiza com todo mundo |
+| Troca UA | ✅ | ✅ | n/a (todos têm o mesmo) |
+| Troca `navigator.platform` | ❌ (continua "Linux") | ✅ | ✅ (mas todo mundo tem o mesmo) |
+| Troca WebGL/canvas/audio/fonts | ❌ | ✅ coerente via BrowserForge | ✅ via resistFingerprinting (zeros) |
+| Client Hints (`Sec-CH-UA-*`) | ❌ | ✅ | ✅ |
+| Geo/timezone casados com IP | ❌ | ✅ (`geoip=True`) | uniforme |
+| Perfis mobile | ✅ (detectáveis) | ❌ | ❌ |
+| Passa em CreepJS | ❌ várias "lies" | ✅ Trust >70% típico | ✅ Trust ~80% (homogêneo) |
+| Dependências | só apt | apt + venv (~300 MB) | bundle pronto |
+| Velocidade | rápido | médio | médio |
 
-**Use Caminho B sempre que possível.** O Caminho A é só para casos onde você quer algo ultra-leve, ou precisa de perfil mobile (sabendo que será detectado).
-
----
-
-## Limitações
-
-1. **Camoufox não emula iPhone/Android.** Documentação oficial só aceita `os="windows"|"macos"|"linux"`. Para mobile com fingerprint coerente não existe solução FOSS gratuita hoje — alternativas pagas: Multilogin, Dolphin Anty, GoLogin, AdsPower.
-2. **Tor é lento e muitos sites bloqueiam exit nodes.** Cloudflare desafia, Google joga CAPTCHA, alguns sites devolvem 403. Para uso geral considere VPN com SOCKS (ex: Mullvad VPN pago).
-3. **Listas de proxies grátis (Proxifly, ProxyScrape, Spys) são impráticas.** Sobrevivência < 10 % ao dia, latências enormes, alguns injetam ads/roubam dados.
-4. **`--user-agent` no Chromium não atualiza Client Hints** (`navigator.userAgentData`). Sites modernos (Google, anti-bots) detectam essa discrepância. Camoufox atualiza ambos.
-5. **`privacy.resistFingerprinting=true` no Firefox sobrescreve UA custom.** Por isso não há um "Caminho Firefox vanilla" no projeto.
-6. **WebRTC / DNS podem vazar IP real.** Caminho A mitiga com `--host-resolver-rules`; Caminho B mitiga com defaults do Camoufox (`block_webrtc`).
-7. **Mullvad Browser e Tor Browser não servem** para este caso — eles homogeneízam todos os usuários no MESMO fingerprint, não deixam você fingir ser outro dispositivo.
-8. **Anti-bots enterprise (DataDome, PerimeterX, Kasada, Cloudflare BM) detectam Camoufox.** O objetivo realista deste projeto é despistar tracking publicitário e sites comuns, **não** burlar anti-bot enterprise.
-9. **User-Agents envelhecem**. Chrome/Firefox sobem versão a cada 4 semanas. Recalibre as strings em `spoof-browser.sh` periodicamente. Fonte boa: <https://jnrbsn.github.io/user-agents/user-agents.json>.
+**Use `ghost.sh` por padrão.** Use `spoof-browser.sh` só pra perfis mobile sabendo que é detectável. Use Tor Browser quando quiser **anonimato uniforme** (se misturar com a multidão) em vez de **identidade trocada** (parecer outra pessoa).
 
 ---
 
-## Estrutura do projeto
+## Estrutura
 
 ```
 ghost-browser/
 ├── README.md              # este arquivo
+├── FIXES.md               # bugs conhecidos + workarounds atuais
 ├── LICENSE                # MIT
 ├── .gitignore
-├── install.sh             # apt + venv + camoufox fetch
-├── uninstall.sh           # remove venv + cache; pergunta sobre apt
-├── spoof-browser.sh       # Caminho A — Chromium + Tor + UA (8 perfis)
-├── camoufox-spoof.sh      # Caminho B — Camoufox + Tor (3 perfis desktop)
-└── new-tor-circuit.sh     # força novo IP via SIGNAL NEWNYM
+├── install.sh             # apt + venv + camoufox fetch + Brave (auto, sem snap)
+├── uninstall.sh           # remove venv/cache; pergunta sobre apt; limpa repo Brave
+├── ghost.sh               # ★ super-comando: pergunta URL, OS aleatório, GPS negado, cleanup total
+├── camoufox-spoof.sh      # Caminho B manual (escolhe OS, ENTER pra fechar)
+├── spoof-browser.sh       # Caminho A (Chromium/Brave + UA spoof, 8 perfis incl. mobile)
+└── new-tor-circuit.sh     # força SIGNAL NEWNYM (ControlPort 9051) ou systemctl reload
 ```
+
+---
+
+## Perfis Caminho A
+
+| Perfil | UA | Resolução |
+|---|---|---|
+| `windows-chrome` | Chrome/135 em Windows NT 10 | 1920×1080 |
+| `windows-edge` | Edge/135 em Windows NT 10 | 1920×1080 |
+| `macos-safari` | Safari 17.6 em macOS | 1440×900 |
+| `macos-chrome` | Chrome/135 em macOS | 1440×900 |
+| `ubuntu-firefox` | Firefox 140 em Ubuntu | 1920×1080 |
+| `iphone-safari` | Safari 26 em iOS 18.6 | 393×852 |
+| `galaxy-s24` | Chrome/135 em Android 14 | 412×915 |
+| `ipad-safari` | Safari 17 em iPadOS 18 | 1024×1366 |
+
+---
+
+## Limitações & honestidade
+
+1. **Não é silver bullet.** Anti-bot enterprise (Cloudflare BM, DataDome) detecta Camoufox via TLS/HTTP-2 fingerprint. Esta stack mira tracking publicitário e cadastros normais — não nações-estado, não Akamai-fronted login flows.
+2. **Tor é lento.** Em média 5–15s pra primeira requisição. Cloudflare desafia exit nodes. Se um site bloquear, alternativa é trocar `socks5://127.0.0.1:9050` por SOCKS de VPN paga (Mullvad, IVPN) no `ghost.sh` linha ~80.
+3. **User-Agents envelhecem.** Recalibre as strings em `spoof-browser.sh` a cada ~3 meses. Fonte boa: [jnrbsn.github.io/user-agents/user-agents.json](https://jnrbsn.github.io/user-agents/user-agents.json).
+4. **Mullvad Browser e Tor Browser homogeneízam, não personificam.** Útil pra ler anonimamente, inútil pra cadastrar como "outro alguém".
+5. **WebRTC vaza IP local em modo `--no-proxy`.** Sempre que o Tor for desativado, considere que sua máquina está exposta como Linux normal.
+6. **Camoufox não emula iPhone/Android.** Documentação oficial só aceita `os="windows"|"macos"|"linux"`. Pra mobile coerente, alternativas pagas: GoLogin, Multilogin, AdsPower.
+
+---
+
+## Bugs conhecidos
+
+Veja [FIXES.md](FIXES.md). Hoje (12/05/2026), três bugs documentados, todos corrigidos no código:
+
+1. Teste do Tor no `install.sh` usava `ipinfo.io` (que Cloudflare bloqueia pra exits) → falso negativo. **Fixado** com fallback pra `check.torproject.org`.
+2. `chromium-family não instalado` em Pop!_OS sem snap → install.sh agora adiciona repo apt da Brave automaticamente. **Fixado** (precisa aprovar `sudo` no primeiro run).
+3. `TypeError: launch() got unexpected kwarg 'user_data_dir'` em Camoufox 0.4.11 → faltava `persistent_context=True`. **Fixado** em `ghost.sh` e `camoufox-spoof.sh`.
+
+---
+
+## Manifesto curto
+
+Privacy não é sobre esconder. É sobre **escolher** o que mostrar, pra quem, e quando. Sites que coletam fingerprint sem te perguntar quebraram esse contrato primeiro. Esta ferramenta é uma resposta proporcional.
+
+Não promove fraude. Não burla mecanismos de pagamento. Não invade sistemas. Faz uma coisa só: te devolve o controle de qual identidade seu browser apresenta ao internet.
+
+A legalidade depende de jurisdição e de termos-de-uso do destino. Em quase todos os lugares civilizados, **trocar UA, IP e fingerprint é permitido**. Burlar ToS é cinza. Fraude documental é crime — em qualquer lugar, com ou sem esta ferramenta. **Você é o operador, você assume as consequências.** Esta linha não tem como ser apagada por boa intenção do dev.
+
+---
+
+## Inspirações & afins
+
+- [Tor Project](https://www.torproject.org/) — o original
+- [Camoufox](https://github.com/daijro/camoufox) — Firefox C++ patched, faz o trabalho pesado
+- [BrowserForge](https://github.com/daijro/browserforge) — fingerprints coerentes
+- [EFF Privacy Badger](https://privacybadger.org/), [uBlock Origin](https://ublockorigin.com/), [Mullvad VPN](https://mullvad.net/)
+- [Cypherpunks Manifesto](https://www.activism.net/cypherpunk/manifesto.html), [Crypto Anarchist Manifesto](https://www.activism.net/cypherpunk/crypto-anarchy.html)
+- [EFF Cover Your Tracks](https://coveryourtracks.eff.org/) — entenda o quanto você vaza
 
 ---
 
 ## Licença
 
-MIT. Veja [`LICENSE`](LICENSE).
+MIT. Faça fork. Faça merge. Mande PR. Mande issue. Se algo quebrar com uma atualização do Camoufox/Firefox, abra issue com o stacktrace — esta stack vai precisar de manutenção contínua porque o lado adversário também não dorme.
 
----
-
-## Aviso ético
-
-Este projeto tem fins **educacionais** (QA, pesquisa de privacidade, automação de tarefas próprias, testes anti-fingerprint). Burlar termos de uso de serviços, mecanismos anti-fraude ou jurisdições onde Tor é restrito pode ser ilegal. Responsabilidade do operador.
+> "If privacy is outlawed, only outlaws will have privacy."
+> — Phil Zimmermann (criador do PGP)

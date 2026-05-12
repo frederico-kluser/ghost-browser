@@ -85,7 +85,10 @@ with Camoufox(
     proxy=PROXY,
     screen=screen,
     user_data_dir=UDD,
-    persistent_context=False,      # descartável
+    # True => Camoufox chama launch_persistent_context(), que aceita user_data_dir.
+    # Em Camoufox 0.4.11 com persistent_context=False, launch() rejeita user_data_dir
+    # com TypeError. O perfil ainda é descartável porque o trap do bash apaga $TMP.
+    persistent_context=True,
     i_know_what_im_doing=False,
 ) as browser:
     page = browser.new_page()
