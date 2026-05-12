@@ -1,4 +1,8 @@
-# ghost-browser
+<p align="center">
+  <img src="logo.jpg" alt="ghost-browser" width="220"/>
+</p>
+
+<h1 align="center">ghost-browser</h1>
 
 > **Sua sessão. Seu IP. Seu fingerprint. Sua escolha.**
 >
