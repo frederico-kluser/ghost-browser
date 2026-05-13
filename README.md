@@ -6,7 +6,7 @@
 
 > **Sua sessão. Seu IP. Seu fingerprint. Sua escolha.**
 >
-> Um navegador descartável, isolado, com IP rotacionado pelo Tor e fingerprint coerente trocado em nível C++. Linux. Bash. Sem telemetria. Sem conta. Sem rastro.
+> Um navegador descartável, isolado, com IP rotacionado pelo Tor e fingerprint coerente trocado em nível C++. Linux (Debian/Arch/Fedora + Flatpak fallback) e macOS. Bash. Sem telemetria. Sem conta. Sem rastro.
 
 ```bash
 ./install.sh   # uma vez
@@ -124,7 +124,7 @@ Reverter tudo:
 ./uninstall.sh
 ```
 
-Remove venv, cache do Camoufox (XDG no Linux ou `~/Library/Caches/camoufox` no macOS), perfis temporários, e pergunta antes de remover pacotes (só o que foi rastreado em `~/.cache/ghost-browser/installed-pkgs`). Se Brave foi instalado por nós no Linux, também limpa o source list apt e a chave GPG. No macOS, casks instalados por nós (ex.: `chromium`) também são removidos.
+Remove venv, cache do Camoufox (XDG no Linux ou `~/Library/Caches/camoufox` no macOS), perfis temporários, e pergunta antes de remover pacotes (só o que foi rastreado em `~/.cache/ghost-browser/installed-pkgs`, com prefixos `pkg:`/`cask:`/`flatpak:`/`wrapper:` pra cada tipo). Se Brave foi instalado via repo apt no Debian, também limpa source list e chave GPG. Se foi via Flatpak (qualquer Linux), faz `flatpak uninstall --user` e remove o wrapper em `~/.local/bin/brave-browser`. No macOS, casks (ex.: `chromium`) são removidos via `brew uninstall --cask`.
 
 ---
 
@@ -207,16 +207,20 @@ curl -s --socks5-hostname 127.0.0.1:9050 https://check.torproject.org/api/ip
 ```
 ghost-browser/
 ├── README.md              # este arquivo
-├── FIXES.md               # bugs conhecidos + workarounds atuais
+├── FIXES.md               # histórico de bugs corrigidos (todos fechados)
 ├── LICENSE                # MIT
+├── logo.jpg               # mascote (fantasma minimalista, mono)
 ├── .gitignore
-├── install.sh             # auto-detecta S.O. — apt+Brave repo no Linux, brew+cask no macOS
-├── uninstall.sh           # remove venv/cache; pergunta sobre pacotes; limpa repos do Linux
+├── install.sh             # auto-detecta S.O. + distro Linux (Debian/Arch/Fedora);
+│                          # Flatpak como fallback universal; resumo [+]/[=]/[!] no fim
+├── uninstall.sh           # remove venv/cache; parseia prefixos pkg:/cask:/flatpak:/wrapper:;
+│                          # limpa repo apt da Brave (Debian) ou wrapper ~/.local/bin (Flatpak)
 ├── ghost.sh               # ★ super-comando: pergunta URL, OS aleatório, GPS negado, cleanup total
 ├── camoufox-spoof.sh      # Caminho B manual (escolhe OS, ENTER pra fechar)
 ├── spoof-browser.sh       # Caminho A (Chromium/Brave + UA spoof, 8 perfis incl. mobile)
 ├── new-tor-circuit.sh     # força SIGNAL NEWNYM (ControlPort 9051) ou reload do serviço
-└── lib/platform.sh        # detecção de S.O. + helpers brew/apt/systemd/launchd
+└── lib/platform.sh        # detecção de S.O. + distro + dispatch de package manager
+                           # (apt/pacman/dnf/brew); helpers Flatpak; bash 3.2 portable
 ```
 
 ---
