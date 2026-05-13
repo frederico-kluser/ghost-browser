@@ -16,6 +16,7 @@
 | 2 | `chromium-family não instalado` em Pop!_OS sem snap | ✅ FECHADO |
 | 3 | `TypeError: launch() got unexpected kwarg 'user_data_dir'` (Camoufox 0.4.11) | ✅ FECHADO |
 | — | Suporte macOS (não bug, evolução) | ✅ ADICIONADO via `lib/platform.sh` |
+| 4 | `install.sh` quebrava em Arch/Fedora (`dpkg`/`apt` hardcoded) | ✅ FECHADO |
 
 ---
 
@@ -117,6 +118,43 @@ OK
 
 ### Status
 ✅ **Fechado** em `ghost.sh` e `camoufox-spoof.sh`.
+
+---
+
+## Bug 4 — `install.sh` apt-only (quebrava em Arch/Fedora)
+
+### Sintoma original
+Colega usuário de Arch tentou rodar `./install.sh` e desistiu ao ver `apt-cache show`, `sudo apt install`, `libgtk-3-0t64`. Em qualquer distro não-Debian, o script morria na primeira chamada a `dpkg -s` dentro de `ghost_pkg_is_installed`.
+
+### Causa raiz
+O branch Linux de `lib/platform.sh` chamava `dpkg`/`apt` direto. `install.sh` tinha nomes de pacote Debian-only (`libasound2t64`, `netcat-openbsd`, `python3-venv`), e a rota Brave era exclusivamente apt-based (`/etc/apt/sources.list.d/...`).
+
+### Fix
+1. **`lib/platform.sh`** — adicionadas funções `ghost_linux_distro` (lê `/etc/os-release`, retorna `debian|arch|fedora|other`) e `ghost_pkg_manager` (`apt|pacman|dnf|brew`). As funções `ghost_pkg_{is_installed,install,remove}` agora despacham via `case "$(ghost_pkg_manager)"`. Acrescentadas `ghost_pkg_update_cache`, `ghost_flatpak_available`, `ghost_flatpak_ensure_flathub`, `ghost_flatpak_install`.
+2. **`install.sh`** — bloco de pacotes substituído por `case "$DISTRO"` com listas separadas:
+   - Debian: mantém `pick_pkg` pro t64; `libgtk-3-0t64`, `netcat-openbsd`, `python3-venv`...
+   - Arch: `gtk3`, `alsa-lib`, `dbus-glib`, `libxcb`, `openbsd-netcat`, `python python-pip`
+   - Fedora: `gtk3`, `alsa-lib`, `dbus-glib`, `libX11-xcb`, `nmap-ncat`, `python3 python3-pip`
+3. Browser por distro: Debian (snap → chromium-browser; sem snap → Brave apt repo); Arch (`pacman -S chromium`); Fedora (`dnf install chromium`); fallback universal via Flatpak (`com.brave.Browser` + wrapper em `~/.local/bin/brave-browser` pro `spoof-browser.sh` achar via PATH).
+4. **`uninstall.sh`** — parseia 4 prefixos no PKG_TRACK_FILE: `pkg:`, `cask:`, `flatpak:`, `wrapper:`. Cleanup do repo apt da Brave guardado atrás de `DISTRO == debian`.
+
+### Validação
+```bash
+source lib/platform.sh
+ghost_linux_distro     # debian (Pop!_OS), arch (Arch), fedora (Fedora)
+ghost_pkg_manager      # apt, pacman, dnf
+```
+
+Teste de container (alto valor, baixo custo):
+```bash
+docker run --rm -it -v "$PWD:/repo" -w /repo archlinux:latest \
+  bash -c 'pacman -Sy --noconfirm sudo && useradd -m -G wheel t && \
+           echo "t ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers && \
+           su t -c "/repo/install.sh"'
+```
+
+### Status
+✅ **Fechado**. Cobertura nativa: Arch + Fedora + Debian. Fallback Flatpak universal pra qualquer outra distro Linux.
 
 ---
 

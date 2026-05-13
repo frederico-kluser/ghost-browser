@@ -66,13 +66,23 @@ if [[ -f "$TRACK" ]]; then
         RESP_LOW="$(printf '%s' "$RESP" | tr '[:upper:]' '[:lower:]')"
         if [[ "$RESP_LOW" =~ ^y(es)?$ ]]; then
 
-            # Separa entries: "cask:foo" (macOS cask) vs nome simples (formula/apt)
+            # Separa entries por prefixo:
+            #   pkg:foo     → pacote do package manager nativo (apt/pacman/dnf/brew formula)
+            #   cask:foo    → macOS brew cask
+            #   flatpak:foo → app Flatpak (escopo --user)
+            #   wrapper:/p  → script wrapper criado em ~/.local/bin
+            #   (sem prefixo) → legado, tratado como pkg:
             FORMULAE=()
             CASKS=()
+            FLATPAKS=()
+            WRAPPERS=()
             for entry in "${TRACKED[@]}"; do
                 case "$entry" in
-                    cask:*) CASKS+=("${entry#cask:}") ;;
-                    *)      FORMULAE+=("$entry") ;;
+                    pkg:*)     FORMULAE+=("${entry#pkg:}") ;;
+                    cask:*)    CASKS+=("${entry#cask:}") ;;
+                    flatpak:*) FLATPAKS+=("${entry#flatpak:}") ;;
+                    wrapper:*) WRAPPERS+=("${entry#wrapper:}") ;;
+                    *)         FORMULAE+=("$entry") ;;
                 esac
             done
 
@@ -89,8 +99,24 @@ if [[ -f "$TRACK" ]]; then
                 ghost_cask_uninstall "${CASKS[@]}" || warn "alguma remoção de cask falhou"
             fi
 
-            # Linux-only: limpa repo apt da Brave se brave-browser foi instalado por nós
-            if [[ "$OS_KIND" == "linux" ]] \
+            if [[ ${#FLATPAKS[@]} -gt 0 ]]; then
+                info "Removendo flatpaks (--user): ${FLATPAKS[*]}"
+                for app in "${FLATPAKS[@]}"; do
+                    flatpak uninstall --user -y "$app" 2>/dev/null \
+                        || warn "flatpak uninstall $app falhou — tente manualmente"
+                done
+            fi
+
+            if [[ ${#WRAPPERS[@]} -gt 0 ]]; then
+                info "Removendo wrappers em ~/.local/bin: ${WRAPPERS[*]}"
+                for w in "${WRAPPERS[@]}"; do rm -f "$w"; done
+            fi
+
+            # Cleanup Debian-specific: repo apt da Brave (criado pelo install.sh
+            # quando foi rota sem-snap). Em Arch/Fedora não há repo terceiro
+            # adicionado por nós, então o ghost_pkg_remove acima já bastou.
+            DISTRO_NOW="$(ghost_linux_distro 2>/dev/null || echo other)"
+            if [[ "$DISTRO_NOW" == "debian" ]] \
                && printf '%s\n' "${FORMULAE[@]}" | grep -qx brave-browser; then
                 info "Removendo repositório apt da Brave..."
                 sudo rm -f /etc/apt/sources.list.d/brave-browser-release.list
@@ -110,11 +136,12 @@ if [[ -f "$TRACK" ]]; then
 else
     warn "Sem registro em $TRACK (install.sh nunca rodou aqui, ou é versão antiga)."
     warn "Não removerei pacotes automaticamente para evitar tirar algo que você já tinha."
-    if [[ "$OS_KIND" == "linux" ]]; then
-        warn "Se quiser remover manualmente: sudo apt remove tor"
-    else
-        warn "Se quiser remover manualmente: brew uninstall tor"
-    fi
+    case "$(ghost_pkg_manager 2>/dev/null)" in
+        apt)    warn "Se quiser remover manualmente: sudo apt remove tor" ;;
+        pacman) warn "Se quiser remover manualmente: sudo pacman -Rns tor" ;;
+        dnf)    warn "Se quiser remover manualmente: sudo dnf remove tor" ;;
+        brew)   warn "Se quiser remover manualmente: brew uninstall tor" ;;
+    esac
 fi
 
 info "Uninstall concluído."

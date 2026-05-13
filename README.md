@@ -71,23 +71,35 @@ E o que **não** dá pra resolver com esta stack — sendo honesto:
 
 ## Instalação
 
-Funciona em **Ubuntu/Debian/Pop!_OS 22.04+** (via `apt`) e **macOS 13+** (via Homebrew). O `install.sh` detecta o S.O. automaticamente — mesmo comando nos dois:
+`install.sh` detecta S.O. **e distro** automaticamente. Mesmo comando nas três famílias Linux principais e no macOS:
 
 ```bash
 ./install.sh
 ```
 
+### Plataformas suportadas
+
+| Família | Distros confirmadas | Package manager | Browser default (Caminho A) |
+|---|---|---|---|
+| Debian | Ubuntu, Pop!_OS, Debian, Mint | `apt` | `chromium-browser` (com snap) / Brave (sem snap, via repo apt oficial) |
+| Arch | Arch, Manjaro, EndeavourOS, CachyOS | `pacman` | `chromium` (repo `extra` oficial) |
+| Fedora | Fedora, Nobara, RHEL, Rocky, AlmaLinux | `dnf` | `chromium` (repos default) |
+| macOS | macOS 13+ | `brew` (Homebrew obrigatório) | `chromium` via brew cask |
+| Outras | qualquer Linux com Flatpak | — | `com.brave.Browser` via Flathub + wrapper em `~/.local/bin/` |
+
+> `ghost.sh` (Caminho B) **funciona em qualquer distro** — Camoufox traz Firefox bundled, não depende de browser do sistema. A coluna "Browser default" só importa para `spoof-browser.sh` (Caminho A).
+
 ### Requisitos por S.O.
 
-**Linux** — usa `sudo` na primeira execução para `apt` e `systemctl`.
+**Linux** — usa `sudo` na primeira execução pro package manager nativo (`apt`/`pacman`/`dnf`) e `systemctl`.
 
 **macOS** — requer [Homebrew](https://brew.sh) **pré-instalado**; o `install.sh` orienta o usuário caso esteja faltando. Não usa `sudo` (brew dispensa root).
 
 O `install.sh` é idempotente e fala muito. Ele instala (só o que falta):
 
-- `tor` (proxy SOCKS5 em `127.0.0.1:9050`) — serviço `systemd` no Linux, `brew services` no macOS
-- Um navegador Chromium-family — em Linux com `snapd`, instala Chromium do snap; em Pop!_OS/Debian sem snap, baixa chave GPG oficial da Brave e adiciona o repo apt; em macOS, instala `chromium` via Homebrew Cask se nenhum (Chromium/Brave/Chrome/Edge) já estiver em `/Applications`
-- Linux apenas: libs nativas do Camoufox (`libgtk-3-0t64`, `libasound2t64`, `libdbus-glib-1-2`, `libx11-xcb1`). macOS dispensa — Camoufox usa Firefox Cocoa nativo
+- `tor` (proxy SOCKS5 em `127.0.0.1:9050`) — `systemd` no Linux, `brew services` no macOS
+- Um navegador Chromium-family conforme tabela acima; se falhar e o sistema tiver Flatpak, cai pra `com.brave.Browser` com wrapper transparente em `~/.local/bin/`
+- Libs runtime do Camoufox (nomes diferem por distro: `libgtk-3-0t64` no Debian, `gtk3` no Arch/Fedora, etc.). macOS dispensa — Camoufox usa Firefox Cocoa nativo.
 - venv Python em `~/.camoufox-venv` com `camoufox[geoip]`
 - binário Camoufox (Firefox patched) + dataset GeoIP (~300 MB)
 - valida saída Tor em endpoints Tor-friendly (`check.torproject.org`, `api.ipify.org`)
