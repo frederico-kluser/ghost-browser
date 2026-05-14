@@ -6,6 +6,13 @@
 >
 > Quer limpar o repo? Pode deletar este arquivo a qualquer momento.
 
+> ⚠️ **Aviso de leitura (refactor 2026-05):** este documento ainda menciona
+> `spoof-browser.sh`, `camoufox-spoof.sh` e a instalação automática de
+> Chromium/Brave/Flatpak — esses scripts e a instalação foram **removidos** na
+> simplificação de 2026-05 (PR `ai-task-1778743374`). O `ghost.sh` virou ponto
+> único de entrada, controlado pelas env vars `PROXY`, `KEEP` e `GHOST_OS`. As
+> referências abaixo são preservadas como contexto histórico dos bugs fechados.
+
 ---
 
 ## Status atual (12/05/2026)

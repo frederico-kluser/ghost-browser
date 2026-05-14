@@ -169,46 +169,9 @@ ghost_pkg_update_cache() {
 }
 
 # ============================================================
-# Flatpak (fallback universal pra browser em distros sem suporte nativo)
+# Brew casks (apenas macOS) — install.sh atual não usa cask,
+# mas uninstall.sh ainda precisa remover casks de instalações legadas.
 # ============================================================
-
-ghost_flatpak_available() {
-    command -v flatpak >/dev/null 2>&1
-}
-
-# Garante remote flathub no escopo --user (sem sudo). Idempotente.
-ghost_flatpak_ensure_flathub() {
-    ghost_flatpak_available || return 1
-    flatpak remote-add --if-not-exists --user flathub \
-        https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
-}
-
-# Instala um app flatpak no escopo --user. Uso: ghost_flatpak_install com.brave.Browser
-ghost_flatpak_install() {
-    ghost_flatpak_available || return 1
-    flatpak install --user -y flathub "$1"
-}
-
-# ghost_flatpak_is_installed APP_ID → 0 se instalado
-ghost_flatpak_is_installed() {
-    ghost_flatpak_available || return 1
-    flatpak info --user "$1" >/dev/null 2>&1 || flatpak info "$1" >/dev/null 2>&1
-}
-
-# ghost_cask_is_installed CASK → apenas macOS; status 1 no Linux
-ghost_cask_is_installed() {
-    case "$(ghost_os)" in
-        macos) brew list --cask --versions "$1" >/dev/null 2>&1 ;;
-        *)     return 1 ;;
-    esac
-}
-
-ghost_cask_install() {
-    case "$(ghost_os)" in
-        macos) brew install --cask "$@" ;;
-        *)     return 1 ;;
-    esac
-}
 
 ghost_cask_uninstall() {
     case "$(ghost_os)" in
@@ -284,50 +247,6 @@ ghost_service_diag_hint() {
 # ============================================================
 # Caminhos / binários
 # ============================================================
-
-# Echo do primeiro binário Chromium-family encontrado. Caminho absoluto.
-# Caller deve usar com aspas: "$BROWSER".
-# No Linux, também checa wrappers em ~/.local/bin (instalados pelo install.sh
-# quando o browser veio do Flatpak — o wrapper faz `exec flatpak run ...`).
-ghost_chrome_binary() {
-    case "$(ghost_os)" in
-        linux)
-            local b
-            for b in chromium-browser chromium google-chrome brave-browser; do
-                if command -v "$b" >/dev/null 2>&1; then
-                    command -v "$b"
-                    return 0
-                fi
-            done
-            # Wrappers do Flatpak (precedência menor que pkg nativo)
-            for b in "$HOME/.local/bin/brave-browser" "$HOME/.local/bin/chromium"; do
-                if [[ -x "$b" ]]; then
-                    printf '%s\n' "$b"
-                    return 0
-                fi
-            done
-            ;;
-        macos)
-            # /Applications/ paths — ordem reflete preferência (Chromium puro > Brave > Chrome > Edge)
-            local app
-            for app in \
-                "/Applications/Chromium.app/Contents/MacOS/Chromium" \
-                "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" \
-                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-                "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" \
-                "$HOME/Applications/Chromium.app/Contents/MacOS/Chromium" \
-                "$HOME/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" \
-                "$HOME/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-            do
-                if [[ -x "$app" ]]; then
-                    printf '%s\n' "$app"
-                    return 0
-                fi
-            done
-            ;;
-    esac
-    return 1
-}
 
 # Diretórios candidatos do cache binário do Camoufox (1 por linha).
 # Removemos todos no uninstall — Camoufox usa platformdirs e pode escolher

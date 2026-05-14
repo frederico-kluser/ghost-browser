@@ -3,12 +3,11 @@
 #
 # Instala:
 #   - Tor (proxy SOCKS5 em 127.0.0.1:9050)
-#   - Chromium-family browser (Caminho A)
 #   - libs nativas requeridas por Camoufox (apenas Linux)
-#   - venv Python com Camoufox + GeoIP (Caminho B)
+#   - venv Python com Camoufox + GeoIP
 #
-# Suporta Ubuntu/Debian 22.04+ (apt) e macOS 13+ (Homebrew obrigatório).
-# S.O. detectado automaticamente via lib/platform.sh.
+# Suporta Debian/Arch/Fedora (Linux) e macOS 13+ (Homebrew obrigatório).
+# S.O. e distro detectados automaticamente via lib/platform.sh.
 
 set -euo pipefail
 
@@ -136,130 +135,6 @@ for pkg in "${SYS_PKGS[@]}"; do
     fi
 done
 
-# -------- 1b. browser Chromium-family (skip-if-present, dispatch por distro) --------
-# Caminho A (spoof-browser.sh) precisa de um browser Chromium-family. Caminho B
-# (ghost.sh/camoufox-spoof.sh) NÃO precisa — Camoufox traz Firefox bundled.
-# Estratégia: native primeiro (pacman/dnf/apt), Flatpak universal como fallback.
-BROWSER_OK=0
-if CHROME_BIN="$(ghost_chrome_binary)" && [[ -n "$CHROME_BIN" ]]; then
-    info "Navegador Chromium-based já presente: $CHROME_BIN — pulando instalação."
-    SKIPPED+=("chromium-family: $CHROME_BIN já presente")
-    BROWSER_OK=1
-else
-    case "$DISTRO" in
-        macos)
-            info "Instalando 'chromium' via brew cask..."
-            if ghost_cask_install chromium; then
-                echo "cask:chromium" >> "$PKG_TRACK_FILE"
-                INSTALLED+=("cask: chromium (brew)")
-                BROWSER_OK=1
-            else
-                FAILED+=("chromium: 'brew install --cask chromium' falhou")
-            fi
-            ;;
-        debian)
-            if command -v snap >/dev/null 2>&1; then
-                info "Instalando chromium-browser via apt (snap transitional)..."
-                if sudo apt install -y chromium-browser; then
-                    echo "pkg:chromium-browser" >> "$PKG_TRACK_FILE"
-                    INSTALLED+=("apt: chromium-browser")
-                    BROWSER_OK=1
-                else
-                    FAILED+=("chromium-browser: apt install falhou")
-                fi
-            else
-                # Pop!_OS / Debian puro: Brave via repo apt oficial
-                info "Sem snap detectado — instalando Brave via repositório apt oficial..."
-                BRAVE_KEY="/usr/share/keyrings/brave-browser-archive-keyring.gpg"
-                BRAVE_LIST="/etc/apt/sources.list.d/brave-browser-release.list"
-                BRAVE_OK=1
-                if [[ ! -f "$BRAVE_KEY" ]]; then
-                    if ! sudo curl -fsSLo "$BRAVE_KEY" \
-                            https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg; then
-                        FAILED+=("brave: falha ao baixar chave GPG")
-                        BRAVE_OK=0
-                    fi
-                fi
-                if [[ "$BRAVE_OK" -eq 1 && ! -f "$BRAVE_LIST" ]]; then
-                    echo "deb [signed-by=$BRAVE_KEY] https://brave-browser-apt-release.s3.brave.com/ stable main" \
-                        | sudo tee "$BRAVE_LIST" >/dev/null
-                fi
-                if [[ "$BRAVE_OK" -eq 1 ]]; then
-                    sudo apt update -qq
-                    if sudo apt install -y brave-browser; then
-                        echo "pkg:brave-browser" >> "$PKG_TRACK_FILE"
-                        INSTALLED+=("apt: brave-browser (via repo oficial Brave)")
-                        BROWSER_OK=1
-                    else
-                        FAILED+=("brave-browser: apt install falhou após adicionar repo")
-                    fi
-                fi
-            fi
-            ;;
-        arch)
-            info "Instalando chromium via pacman (repo extra oficial)..."
-            if sudo pacman -S --noconfirm --needed chromium; then
-                echo "pkg:chromium" >> "$PKG_TRACK_FILE"
-                INSTALLED+=("pacman: chromium")
-                BROWSER_OK=1
-            else
-                FAILED+=("chromium: 'pacman -S chromium' falhou")
-            fi
-            ;;
-        fedora)
-            info "Instalando chromium via dnf (repos default)..."
-            if sudo dnf install -y chromium; then
-                echo "pkg:chromium" >> "$PKG_TRACK_FILE"
-                INSTALLED+=("dnf: chromium")
-                BROWSER_OK=1
-            else
-                FAILED+=("chromium: 'dnf install chromium' falhou")
-            fi
-            ;;
-    esac
-
-    # Fallback universal: Flatpak. Garante flatpak instalado e um wrapper em
-    # ~/.local/bin/brave-browser pra spoof-browser.sh achar via PATH.
-    if [[ "$BROWSER_OK" -eq 0 && "$OS_KIND" == "linux" ]]; then
-        info "Browser nativo indisponível — tentando fallback via Flatpak..."
-        if ! ghost_flatpak_available; then
-            info "Instalando flatpak via $PM..."
-            if ghost_pkg_install flatpak; then
-                echo "pkg:flatpak" >> "$PKG_TRACK_FILE"
-                INSTALLED+=("$PM: flatpak")
-            fi
-        fi
-        if ghost_flatpak_available; then
-            ghost_flatpak_ensure_flathub
-            info "Instalando com.brave.Browser do Flathub (escopo --user)..."
-            if ghost_flatpak_install com.brave.Browser; then
-                echo "flatpak:com.brave.Browser" >> "$PKG_TRACK_FILE"
-                # Wrapper transparente pra spoof-browser.sh (que detecta via PATH).
-                mkdir -p "$HOME/.local/bin"
-                WRAPPER="$HOME/.local/bin/brave-browser"
-                cat > "$WRAPPER" <<'WRAP'
-#!/usr/bin/env bash
-# Wrapper criado por ghost-browser/install.sh — proxy pra Brave do Flathub.
-exec flatpak run com.brave.Browser "$@"
-WRAP
-                chmod +x "$WRAPPER"
-                echo "wrapper:$WRAPPER" >> "$PKG_TRACK_FILE"
-                INSTALLED+=("flatpak: com.brave.Browser (+ wrapper em ~/.local/bin)")
-                BROWSER_OK=1
-                # Avisa se ~/.local/bin não está no PATH
-                case ":$PATH:" in
-                    *":$HOME/.local/bin:"*) ;;
-                    *) warn "Adicione \$HOME/.local/bin ao PATH pra spoof-browser.sh achar Brave."  ;;
-                esac
-            else
-                FAILED+=("flatpak: instalação de com.brave.Browser falhou")
-            fi
-        else
-            FAILED+=("browser: nenhum método disponível (nativo + flatpak falharam)")
-        fi
-    fi
-fi
-
 # -------- 2. serviço Tor --------
 # Linux: systemctl enable --now tor. macOS: brew services start tor (persiste
 # entre boots automaticamente — não há "enable" separado).
@@ -367,9 +242,11 @@ else
     warn "Instalação concluída com ${#FAILED[@]} item(ns) de atenção — veja '[!]' acima."
 fi
 echo
-echo "Exemplos:"
-echo "  ./ghost.sh                                       # super-comando: pergunta URL, OS aleatório, GPS negado"
-echo "  ./ghost.sh https://site.com/signup               # one-liner com URL direta"
-echo "  ./spoof-browser.sh windows-chrome                # Caminho A (leve, UA spoof)"
-echo "  ./camoufox-spoof.sh macos https://browserleaks.com   # Caminho B manual"
-echo "  USE_TOR=0 ./camoufox-spoof.sh linux              # sem Tor"
+echo "Exemplos de uso:"
+echo "  ./ghost.sh                                       # default: Tor + OS aleatório + perfil descartável"
+echo "  ./ghost.sh https://site.com/signup               # URL direta"
+echo "  PROXY=none ./ghost.sh                            # sem proxy (IP real, fingerprint trocado)"
+echo "  PROXY=socks5://vpn:1080 ./ghost.sh               # VPN custom (Mullvad, ProtonVPN, etc.)"
+echo "  GHOST_OS=macos ./ghost.sh                        # força OS (sem aleatório)"
+echo "  KEEP=trabalho ./ghost.sh https://gmail.com       # identidade persistente (OS fixado)"
+echo "  KEEP=pessoal GHOST_OS=windows ./ghost.sh         # cria identidade nova com OS específico"

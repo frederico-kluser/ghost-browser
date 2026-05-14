@@ -1,16 +1,24 @@
 #!/usr/bin/env bash
 # ghost.sh — super-comando do ghost-browser
 #
-# Pergunta a URL de cadastro, força novo circuito Tor, abre Camoufox com OS
-# spoofado aleatório (windows|macos|linux), nega geolocalização silenciosamente
-# e apaga tudo (perfil temporário + browser) quando o usuário:
+# Pergunta a URL de cadastro, força novo circuito Tor (se Tor for o proxy),
+# abre Camoufox com OS spoofado (aleatório por default, ou via $GHOST_OS),
+# nega geolocalização silenciosamente e apaga tudo (perfil temporário + browser)
+# quando o usuário:
 #   - fechar a janela do navegador
 #   - apertar Ctrl+C no terminal
 #   - fechar a janela do terminal
 #
 # Uso:
-#   ./ghost.sh                       # pergunta a URL
-#   ./ghost.sh https://site/signup   # passa URL direto
+#   ./ghost.sh                                  # pergunta a URL
+#   ./ghost.sh https://site/signup              # passa URL direto
+#
+# Env vars (todas opcionais):
+#   PROXY    tor (default) | none | socks5://host:port | http://host:port | etc.
+#   KEEP     nome do perfil persistente em ~/.ghost-browser/profiles/<nome>/
+#            (descartável se vazio). OS é fixado na primeira vez.
+#   GHOST_OS windows | macos | linux. Força um OS específico (sem sorteio).
+#   USE_TOR  0 = alias de PROXY=none (compat com docs antigas)
 #
 # Licença: MIT — veja LICENSE
 
@@ -24,9 +32,13 @@ VENV="$HOME/.camoufox-venv"
 
 # -------- cleanup robusto: INT, TERM, HUP, EXIT --------
 TMP=""
+PERSISTENT=0
 cleanup() {
     local rc=$?
-    [[ -n "$TMP" && -d "$TMP" ]] && rm -rf "$TMP"
+    # Só apaga TMP se NÃO for perfil persistente.
+    if [[ -n "$TMP" && -d "$TMP" && "$PERSISTENT" -eq 0 ]]; then
+        rm -rf "$TMP"
+    fi
     exit $rc
 }
 trap cleanup INT TERM HUP EXIT
@@ -45,11 +57,94 @@ if [[ ! -x "$SCRIPT_DIR/new-tor-circuit.sh" ]]; then
     exit 1
 fi
 
-# Garante Tor rodando antes de pedir circuito novo — evita "desconhecido" no IP.
-if ! ghost_service_is_active tor; then
-    echo "[ghost] iniciando Tor ($OS_KIND)..."
-    ghost_service_start tor 2>/dev/null || true
-    sleep 3
+# -------- resolve PROXY --------
+# Compat: USE_TOR=0 vira PROXY=none se PROXY não foi setado explicitamente.
+if [[ -z "${PROXY:-}" && "${USE_TOR:-1}" == "0" ]]; then
+    PROXY="none"
+fi
+
+case "${PROXY:-}" in
+    ""|tor)
+        PROXY_URL="socks5://127.0.0.1:9050"
+        USE_TOR_INTERNAL=1
+        PROXY_LABEL="Tor"
+        ;;
+    none)
+        PROXY_URL=""
+        USE_TOR_INTERNAL=0
+        PROXY_LABEL="nenhum (IP real)"
+        ;;
+    # Playwright (engine do Camoufox) só suporta oficialmente socks5, http, https.
+    socks5://*|http://*|https://*)
+        PROXY_URL="$PROXY"
+        USE_TOR_INTERNAL=0
+        PROXY_LABEL="custom"
+        ;;
+    *)
+        echo "[!] PROXY inválido: '$PROXY'"
+        echo "    Aceitos: tor (default) | none | socks5://host:port | http://host:port | https://host:port"
+        exit 1
+        ;;
+esac
+
+# -------- resolve KEEP (perfil persistente) --------
+PROFILE_DIR=""
+if [[ -n "${KEEP:-}" ]]; then
+    if [[ ! "$KEEP" =~ ^[A-Za-z0-9_-]+$ ]]; then
+        echo "[!] KEEP inválido: '$KEEP'"
+        echo "    Use apenas letras, números, '_' e '-' (sem '.', '/', espaços)."
+        exit 1
+    fi
+    PROFILE_DIR="$HOME/.ghost-browser/profiles/$KEEP"
+    mkdir -p "$PROFILE_DIR"
+    PERSISTENT=1
+fi
+
+# -------- resolve GHOST_OS --------
+OS_LIST=(windows macos linux)
+OS_FILE=""
+[[ -n "$PROFILE_DIR" ]] && OS_FILE="$PROFILE_DIR/.ghost-os"
+
+if [[ -n "${GHOST_OS:-}" ]]; then
+    # Camoufox aceita apenas lowercase ('windows'/'macos'/'linux'); tolera erro
+    # do usuário ('Windows', 'MacOS', etc.). tr é portable em bash 3.2 (macOS).
+    GHOST_OS_LOWER="$(printf '%s' "$GHOST_OS" | tr '[:upper:]' '[:lower:]')"
+    case "$GHOST_OS_LOWER" in
+        windows|macos|linux) OS_RAND="$GHOST_OS_LOWER" ;;
+        *)
+            echo "[!] GHOST_OS inválido: '$GHOST_OS'"
+            echo "    Aceitos: windows | macos | linux"
+            exit 1
+            ;;
+    esac
+    OS_SOURCE="forçado via GHOST_OS"
+    [[ -n "$OS_FILE" ]] && printf '%s\n' "$OS_RAND" > "$OS_FILE"
+elif [[ -n "$OS_FILE" && -s "$OS_FILE" ]]; then
+    OS_RAND="$(tr -d '[:space:]' < "$OS_FILE")"
+    case "$OS_RAND" in
+        windows|macos|linux) ;;
+        *)
+            echo "[!] $OS_FILE corrompido (valor: '$OS_RAND'). Apague ou corrija."
+            exit 1
+            ;;
+    esac
+    OS_SOURCE="persistido em $OS_FILE"
+else
+    OS_RAND="${OS_LIST[$((RANDOM % ${#OS_LIST[@]}))]}"
+    OS_SOURCE="aleatório"
+    if [[ -n "$OS_FILE" ]]; then
+        printf '%s\n' "$OS_RAND" > "$OS_FILE"
+        OS_SOURCE="aleatório (salvo em $OS_FILE)"
+    fi
+fi
+
+# -------- garante Tor up se for usar Tor --------
+if [[ "$USE_TOR_INTERNAL" -eq 1 ]]; then
+    if ! ghost_service_is_active tor; then
+        echo "[ghost] iniciando Tor ($OS_KIND)..."
+        ghost_service_start tor 2>/dev/null || true
+        sleep 3
+    fi
 fi
 
 # -------- pede URL (aceita também via $1) --------
@@ -66,20 +161,30 @@ if [[ ! "$URL" =~ ^https?:// ]]; then
     URL="https://$URL"
 fi
 
-# -------- OS aleatório a cada run --------
-OS_LIST=(windows macos linux)
-OS_RAND="${OS_LIST[$((RANDOM % ${#OS_LIST[@]}))]}"
+# -------- novo circuito Tor (só se Tor) --------
+if [[ "$USE_TOR_INTERNAL" -eq 1 ]]; then
+    echo "[ghost] forçando novo circuito Tor..."
+    "$SCRIPT_DIR/new-tor-circuit.sh" || true
+fi
 
-# -------- novo circuito Tor --------
-echo "[ghost] forçando novo circuito Tor..."
-"$SCRIPT_DIR/new-tor-circuit.sh" || true
+# -------- perfil descartável OU persistente --------
+if [[ "$PERSISTENT" -eq 1 ]]; then
+    TMP="$PROFILE_DIR"
+    PROFILE_LABEL="$TMP (PERSISTENTE — não será apagado)"
+else
+    # $TMPDIR no macOS (/var/folders/.../T); /tmp no Linux. mktemp aceita.
+    TMP="$(mktemp -d "$(ghost_tmp_prefix)/ghost-XXXXXX")"
+    PROFILE_LABEL="$TMP (descartável)"
+fi
 
-# -------- perfil descartável --------
-# Usa $TMPDIR no macOS (/var/folders/.../T); cai pra /tmp no Linux. mktemp aceita.
-TMP="$(mktemp -d "$(ghost_tmp_prefix)/ghost-XXXXXX")"
-echo "[ghost] OS spoof : $OS_RAND"
-echo "[ghost] perfil   : $TMP"
-echo "[ghost] URL      : $URL"
+echo "[ghost] OS spoof : $OS_RAND ($OS_SOURCE)"
+if [[ -n "$PROXY_URL" ]]; then
+    echo "[ghost] proxy   : $PROXY_URL ($PROXY_LABEL)"
+else
+    echo "[ghost] proxy   : $PROXY_LABEL — geoip desativado pra não vazar IP real"
+fi
+echo "[ghost] perfil  : $PROFILE_LABEL"
+echo "[ghost] URL     : $URL"
 
 # -------- dispara Camoufox --------
 # shellcheck source=/dev/null
@@ -94,9 +199,10 @@ from browserforge.fingerprints import Screen
 for s in (signal.SIGHUP, signal.SIGTERM):
     signal.signal(s, lambda *_: sys.exit(0))
 
-URL    = "$URL"
-OS_ARG = "$OS_RAND"
-UDD    = "$TMP"
+URL       = "$URL"
+OS_ARG    = "$OS_RAND"
+UDD       = "$TMP"
+PROXY_URL = "$PROXY_URL"
 
 screens = {
     "windows": Screen(max_width=1920, max_height=1080),
@@ -104,19 +210,24 @@ screens = {
     "linux":   Screen(max_width=1920, max_height=1080),
 }
 
+proxy_arg = {"server": PROXY_URL} if PROXY_URL else None
+# Sem proxy + geoip=True faz Camoufox bater em api.ipify.org/etc com o IP real
+# pra casar locale/timezone. Privacidade: desabilita geoip quando proxy=None.
+use_geoip = proxy_arg is not None
+
 print(f"[ghost] abrindo Camoufox como '{OS_ARG}' -> {URL}")
 
 with Camoufox(
     os=OS_ARG,
     headless=False,
     humanize=True,
-    geoip=True,
-    proxy={"server": "socks5://127.0.0.1:9050"},
+    geoip=use_geoip,
+    proxy=proxy_arg,
     screen=screens[OS_ARG],
     user_data_dir=UDD,
     # True => Camoufox usa launch_persistent_context() (aceita user_data_dir).
     # Sem isso, Playwright reclama: "launch() got unexpected kwarg user_data_dir".
-    # Cleanup permanece: bash trap apaga $TMP de qualquer forma.
+    # Cleanup permanece: bash trap apaga $TMP se PERSISTENT=0.
     persistent_context=True,
     # 0=prompt, 1=allow, 2=deny — nega GPS sem mostrar prompt no site
     firefox_user_prefs={"permissions.default.geo": 2},

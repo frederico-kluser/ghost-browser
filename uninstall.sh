@@ -46,6 +46,37 @@ rm -rf "$T"/cbrowser-* "$T"/cfox-* "$T"/ghost-* 2>/dev/null || true
 # Limpa também /tmp diretamente caso TMPDIR aponte pra outro lugar
 rm -rf /tmp/cbrowser-* /tmp/cfox-* /tmp/ghost-* 2>/dev/null || true
 
+# -------- 3b. perfis persistentes (opcional, interativo) --------
+# KEEP=nome ./ghost.sh salva em ~/.ghost-browser/profiles/<nome>/.
+# Pergunta antes de remover — usuário pode querer guardar essas identidades.
+GHOST_PROFILES="$HOME/.ghost-browser"
+if [[ -d "$GHOST_PROFILES" ]]; then
+    PROFILES_FOUND=()
+    if [[ -d "$GHOST_PROFILES/profiles" ]]; then
+        for d in "$GHOST_PROFILES/profiles"/*/; do
+            [[ -d "$d" ]] && PROFILES_FOUND+=("$(basename "$d")")
+        done
+    fi
+    if [[ ${#PROFILES_FOUND[@]} -gt 0 ]]; then
+        echo
+        warn "Perfis persistentes encontrados em $GHOST_PROFILES/profiles/:"
+        warn "  ${PROFILES_FOUND[*]}"
+        warn "Esses contêm cookies, histórico e identidade fixada (OS) entre sessões."
+        read -r -p "Apagar TODOS os perfis persistentes? [y/N] " RESP
+        RESP_LOW="$(printf '%s' "$RESP" | tr '[:upper:]' '[:lower:]')"
+        if [[ "$RESP_LOW" =~ ^y(es)?$ ]]; then
+            info "Removendo $GHOST_PROFILES..."
+            rm -rf "$GHOST_PROFILES"
+        else
+            info "Mantendo perfis persistentes em $GHOST_PROFILES/profiles/."
+        fi
+    else
+        # Diretório existe mas sem perfis — limpa silenciosamente.
+        rmdir "$GHOST_PROFILES/profiles" 2>/dev/null || true
+        rmdir "$GHOST_PROFILES" 2>/dev/null || true
+    fi
+fi
+
 # -------- 4. pacotes do sistema (opcional) --------
 # Só remove o que install.sh efetivamente instalou neste sistema. Isso evita
 # desinstalar tor/curl/chromium que o usuário já tinha antes do ghost-browser.

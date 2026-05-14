@@ -60,11 +60,13 @@ cd ghost-browser
 | WebRTC IP leak | Camoufox `block_webrtc=True` (default) |
 | HTML5 Geolocation API | `firefox_user_prefs={"permissions.default.geo": 2}` → site recebe `PERMISSION_DENIED` sem prompt |
 | Botão "X" do navegador | `BrowserContext.wait_for_event("close")` → encerra script + apaga perfil |
+| Proxy / VPN customizado | env var `PROXY=socks5://...` sobrescreve Tor default; `PROXY=none` desliga proxy |
+| Identidade persistente | env var `KEEP=nome` salva perfil em `~/.ghost-browser/profiles/<nome>/` com OS fixado |
 
 E o que **não** dá pra resolver com esta stack — sendo honesto:
 
 - **Anti-bot enterprise** (Cloudflare Bot Management, DataDome, PerimeterX, Kasada). Esses caras analisam TLS JA3, HTTP/2 frame ordering, comportamento de mouse com ML. Camoufox melhora mas não esconde. Se você precisa passar por isso, vai pagar GoLogin, Multilogin, AdsPower — não é missão deste repo.
-- **Mobile fingerprint coerente.** Camoufox só desktop. `spoof-browser.sh` tem perfis iPhone/Android mas CreepJS detecta como inconsistente.
+- **Mobile fingerprint coerente.** Camoufox só suporta desktop (`windows`/`macos`/`linux`). Removemos os perfis iPhone/iPad/Android do projeto para não dar falsa sensação de proteção — qualquer anti-bot detectava como inconsistente.
 - **Identidade externa.** Se o site quer SMS/e-mail único, você precisa de [addy.io](https://addy.io), [SimpleLogin](https://simplelogin.io), número descartável. Fora do escopo.
 
 ---
@@ -79,15 +81,14 @@ E o que **não** dá pra resolver com esta stack — sendo honesto:
 
 ### Plataformas suportadas
 
-| Família | Distros confirmadas | Package manager | Browser default (Caminho A) |
-|---|---|---|---|
-| Debian | Ubuntu, Pop!_OS, Debian, Mint | `apt` | `chromium-browser` (com snap) / Brave (sem snap, via repo apt oficial) |
-| Arch | Arch, Manjaro, EndeavourOS, CachyOS | `pacman` | `chromium` (repo `extra` oficial) |
-| Fedora | Fedora, Nobara, RHEL, Rocky, AlmaLinux | `dnf` | `chromium` (repos default) |
-| macOS | macOS 13+ | `brew` (Homebrew obrigatório) | `chromium` via brew cask |
-| Outras | qualquer Linux com Flatpak | — | `com.brave.Browser` via Flathub + wrapper em `~/.local/bin/` |
+| Família | Distros confirmadas | Package manager |
+|---|---|---|
+| Debian | Ubuntu, Pop!_OS, Debian, Mint | `apt` |
+| Arch | Arch, Manjaro, EndeavourOS, CachyOS | `pacman` |
+| Fedora | Fedora, Nobara, RHEL, Rocky, AlmaLinux | `dnf` |
+| macOS | macOS 13+ | `brew` (Homebrew obrigatório) |
 
-> `ghost.sh` (Caminho B) **funciona em qualquer distro** — Camoufox traz Firefox bundled, não depende de browser do sistema. A coluna "Browser default" só importa para `spoof-browser.sh` (Caminho A).
+> Camoufox traz Firefox bundled — não há dependência de navegador do sistema. Em qualquer distro Linux com `tor`, `python3` e libs GTK/X11 básicas, o `ghost.sh` funciona.
 
 ### Requisitos por S.O.
 
@@ -98,7 +99,6 @@ E o que **não** dá pra resolver com esta stack — sendo honesto:
 O `install.sh` é idempotente e fala muito. Ele instala (só o que falta):
 
 - `tor` (proxy SOCKS5 em `127.0.0.1:9050`) — `systemd` no Linux, `brew services` no macOS
-- Um navegador Chromium-family conforme tabela acima; se falhar e o sistema tiver Flatpak, cai pra `com.brave.Browser` com wrapper transparente em `~/.local/bin/`
 - Libs runtime do Camoufox (nomes diferem por distro: `libgtk-3-0t64` no Debian, `gtk3` no Arch/Fedora, etc.). macOS dispensa — Camoufox usa Firefox Cocoa nativo.
 - venv Python em `~/.camoufox-venv` com `camoufox[geoip]`
 - binário Camoufox (Firefox patched) + dataset GeoIP (~300 MB)
@@ -124,13 +124,13 @@ Reverter tudo:
 ./uninstall.sh
 ```
 
-Remove venv, cache do Camoufox (XDG no Linux ou `~/Library/Caches/camoufox` no macOS), perfis temporários, e pergunta antes de remover pacotes (só o que foi rastreado em `~/.cache/ghost-browser/installed-pkgs`, com prefixos `pkg:`/`cask:`/`flatpak:`/`wrapper:` pra cada tipo). Se Brave foi instalado via repo apt no Debian, também limpa source list e chave GPG. Se foi via Flatpak (qualquer Linux), faz `flatpak uninstall --user` e remove o wrapper em `~/.local/bin/brave-browser`. No macOS, casks (ex.: `chromium`) são removidos via `brew uninstall --cask`.
+Remove venv, cache do Camoufox (XDG no Linux ou `~/Library/Caches/camoufox` no macOS), perfis temporários, e pergunta antes de remover pacotes (só o que foi rastreado em `~/.cache/ghost-browser/installed-pkgs`). Se houver perfis persistentes em `~/.ghost-browser/profiles/`, também pergunta interativamente antes de apagá-los.
 
 ---
 
 ## Uso
 
-### Caminho principal — `./ghost.sh`
+### Forma básica
 
 ```bash
 ./ghost.sh                            # pergunta URL interativamente
@@ -148,13 +148,46 @@ Cada execução:
 6. Bloqueia até você fechar o navegador.
 7. Apaga o perfil no exit (Ctrl+C, X do terminal, X do navegador, kill, crash — tudo).
 
-Pra pular o Tor (testes locais), use `USE_TOR=0 ./camoufox-spoof.sh <os> <url>` — o `ghost.sh` é Tor-first por design.
+### Receitas comuns
 
-### Caminhos alternativos
+```bash
+# padrão: Tor + OS aleatório + perfil descartável
+./ghost.sh https://site.com
 
-- **`./camoufox-spoof.sh <windows|macos|linux> [url]`** — mesma engine do `ghost.sh`, sem OS aleatório, sem prompt; espera ENTER no terminal pra encerrar. Útil pra pinar OS.
-- **`./spoof-browser.sh <perfil> [url] [--no-proxy]`** — Caminho A, leve, Chromium/Brave + UA spoof. 8 perfis (`windows-chrome`, `macos-safari`, `iphone-safari`, `galaxy-s24`, etc.). Não tem fingerprint coerente — vai vazar `navigator.platform=Linux` em CreepJS. Útil pra perfis mobile (detectáveis, mas existem).
-- **`./new-tor-circuit.sh`** — força IP novo entre execuções. Já é chamado pelo `ghost.sh`. Pra rodar standalone, abra `ControlPort 9051` no torrc (caminho depende do S.O. — Linux: `/etc/tor/torrc`; macOS: `$(brew --prefix)/etc/tor/torrc`). Veja a seção "Configuração do ControlPort do Tor" acima.
+# usando VPN própria (Mullvad, ProtonVPN paga, qualquer SOCKS5/HTTP)
+PROXY=socks5://10.2.0.1:1080 ./ghost.sh
+
+# sem proxy (IP real, mas fingerprint trocado) — útil para sites internos
+PROXY=none ./ghost.sh
+
+# força um OS específico (sem aleatório)
+GHOST_OS=macos ./ghost.sh
+
+# identidade persistente "trabalho" (cookies + OS fixos entre sessões)
+KEEP=trabalho ./ghost.sh https://gmail.com
+
+# cria identidade nova com OS escolhido manualmente
+KEEP=pessoal GHOST_OS=windows ./ghost.sh
+```
+
+### Variáveis de ambiente
+
+| Variável | Valores | Efeito |
+|---|---|---|
+| `PROXY` | `tor` (default) \| `none` \| `socks5://host:port` \| `http://host:port` \| `https://host:port` | Sobrescreve o proxy Tor padrão. `none` desliga proxy (usa IP real). |
+| `KEEP` | qualquer nome `[A-Za-z0-9_-]+` | Salva o perfil em `~/.ghost-browser/profiles/<nome>/`. OS é fixado na primeira vez. Sem `KEEP`, o perfil é descartado no fim. |
+| `GHOST_OS` | `windows` \| `macos` \| `linux` (aceita maiúsculas; é normalizado para lowercase) | Força um OS específico (sem sorteio). Combinado com `KEEP`, fixa o OS persistente. |
+| `USE_TOR` (legado) | `0` | Alias de `PROXY=none`. Mantido por compat com docs antigas. |
+
+> **Schemes de proxy aceitos:** `socks5://`, `http://`, `https://`. O Playwright (engine do Camoufox) não suporta `socks4://` oficialmente — usar `socks4://` resulta em erro do Camoufox.
+
+> **Privacidade com `PROXY=none`:** quando você desliga o proxy, o `ghost.sh` também desativa `geoip` automaticamente. Sem isso, Camoufox tentaria buscar seu IP real em `api.ipify.org` (ou fallback) para casar locale/timezone — o que vazaria o IP que você quer esconder. Trade-off: sem `geoip`, locale/timezone do Firefox podem não bater com sua região, mas seu IP real fica em casa.
+
+> **Perfil persistente em paralelo:** Firefox usa um arquivo `parent.lock` dentro do `user_data_dir`. Rodar `KEEP=foo ./ghost.sh` duas vezes simultaneamente faz a segunda instância travar com timeout. Use nomes diferentes (`KEEP=foo` + `KEEP=bar`) para rodar em paralelo.
+
+### Helpers
+
+- **`./new-tor-circuit.sh`** — força IP novo entre execuções. Já é chamado pelo `ghost.sh` quando o proxy é Tor. Pra rodar standalone, abra `ControlPort 9051` no torrc (caminho depende do S.O. — Linux: `/etc/tor/torrc`; macOS: `$(brew --prefix)/etc/tor/torrc`). Veja a seção "Configuração do ControlPort do Tor" acima.
 
 ---
 
@@ -182,23 +215,24 @@ curl -s --socks5-hostname 127.0.0.1:9050 https://check.torproject.org/api/ip
 
 ---
 
-## Comparação: Caminho A vs Caminho B vs Tor Browser
+## Comparação: ghost-browser vs Tor Browser
 
-| | Caminho A (`spoof-browser.sh`) | Caminho B (`ghost.sh` / `camoufox-spoof.sh`) | Tor Browser oficial |
-|---|---|---|---|
-| Engine | Chromium / Brave | Camoufox (Firefox patched em C++) | Firefox ESR + patches Tor |
-| Filosofia | Você finge ser outro device | Você finge ser outro device | Você se uniformiza com todo mundo |
-| Troca UA | ✅ | ✅ | n/a (todos têm o mesmo) |
-| Troca `navigator.platform` | ❌ (continua "Linux") | ✅ | ✅ (mas todo mundo tem o mesmo) |
-| Troca WebGL/canvas/audio/fonts | ❌ | ✅ coerente via BrowserForge | ✅ via resistFingerprinting (zeros) |
-| Client Hints (`Sec-CH-UA-*`) | ❌ | ✅ | ✅ |
-| Geo/timezone casados com IP | ❌ | ✅ (`geoip=True`) | uniforme |
-| Perfis mobile | ✅ (detectáveis) | ❌ | ❌ |
-| Passa em CreepJS | ❌ várias "lies" | ✅ Trust >70% típico | ✅ Trust ~80% (homogêneo) |
-| Dependências | só apt | apt + venv (~300 MB) | bundle pronto |
-| Velocidade | rápido | médio | médio |
+| | `ghost-browser` (este repo) | Tor Browser oficial |
+|---|---|---|
+| Engine | Camoufox (Firefox patched em C++) | Firefox ESR + patches Tor |
+| Filosofia | Você finge ser outro device | Você se uniformiza com todo mundo |
+| Troca UA | ✅ | n/a (todos têm o mesmo) |
+| Troca `navigator.platform` | ✅ | ✅ (mas todo mundo tem o mesmo) |
+| Troca WebGL/canvas/audio/fonts | ✅ coerente via BrowserForge | ✅ via resistFingerprinting (zeros) |
+| Client Hints (`Sec-CH-UA-*`) | ✅ | ✅ |
+| Geo/timezone casados com IP | ✅ (`geoip=True`) | uniforme |
+| Proxy customizado (VPN, etc.) | ✅ (`PROXY=socks5://...`) | ❌ (só Tor) |
+| Identidade persistente entre sessões | ✅ (`KEEP=nome`) | ❌ (sempre descartável) |
+| Perfis mobile | ❌ (Camoufox não suporta) | ❌ |
+| Passa em CreepJS | ✅ Trust >70% típico | ✅ Trust ~80% (homogêneo) |
+| Dependências | apt + venv (~300 MB) | bundle pronto |
 
-**Use `ghost.sh` por padrão.** Use `spoof-browser.sh` só pra perfis mobile sabendo que é detectável. Use Tor Browser quando quiser **anonimato uniforme** (se misturar com a multidão) em vez de **identidade trocada** (parecer outra pessoa).
+**Use `ghost.sh`** quando quiser **identidade trocada** (parecer outra pessoa específica, com cookies/sessão controláveis). Use **Tor Browser** quando quiser **anonimato uniforme** (se misturar com a multidão, sem variação entre você e os outros usuários).
 
 ---
 
@@ -212,42 +246,75 @@ ghost-browser/
 ├── logo.jpg               # mascote (fantasma minimalista, mono)
 ├── .gitignore
 ├── install.sh             # auto-detecta S.O. + distro Linux (Debian/Arch/Fedora);
-│                          # Flatpak como fallback universal; resumo [+]/[=]/[!] no fim
-├── uninstall.sh           # remove venv/cache; parseia prefixos pkg:/cask:/flatpak:/wrapper:;
-│                          # limpa repo apt da Brave (Debian) ou wrapper ~/.local/bin (Flatpak)
-├── ghost.sh               # ★ super-comando: pergunta URL, OS aleatório, GPS negado, cleanup total
-├── camoufox-spoof.sh      # Caminho B manual (escolhe OS, ENTER pra fechar)
-├── spoof-browser.sh       # Caminho A (Chromium/Brave + UA spoof, 8 perfis incl. mobile)
+│                          # instala Tor, libs Camoufox, venv Python; resumo [+]/[=]/[!] no fim
+├── uninstall.sh           # remove venv/cache/perfis; pergunta antes de remover pacotes;
+│                          # também pergunta antes de apagar perfis persistentes em ~/.ghost-browser/
+├── ghost.sh               # ★ super-comando: PROXY/KEEP/GHOST_OS via env, Camoufox+Tor por default
 ├── new-tor-circuit.sh     # força SIGNAL NEWNYM (ControlPort 9051) ou reload do serviço
 └── lib/platform.sh        # detecção de S.O. + distro + dispatch de package manager
-                           # (apt/pacman/dnf/brew); helpers Flatpak; bash 3.2 portable
+                           # (apt/pacman/dnf/brew); bash 3.2 portable
+
+# estado (não versionado):
+~/.ghost-browser/profiles/  # perfis persistentes criados por KEEP=nome
+~/.camoufox-venv/           # venv com Camoufox + BrowserForge + GeoIP
+~/.cache/ghost-browser/     # track-file de pacotes instalados pelo install.sh
 ```
-
----
-
-## Perfis Caminho A
-
-| Perfil | UA | Resolução |
-|---|---|---|
-| `windows-chrome` | Chrome/135 em Windows NT 10 | 1920×1080 |
-| `windows-edge` | Edge/135 em Windows NT 10 | 1920×1080 |
-| `macos-safari` | Safari 17.6 em macOS | 1440×900 |
-| `macos-chrome` | Chrome/135 em macOS | 1440×900 |
-| `ubuntu-firefox` | Firefox 140 em Ubuntu | 1920×1080 |
-| `iphone-safari` | Safari 26 em iOS 18.6 | 393×852 |
-| `galaxy-s24` | Chrome/135 em Android 14 | 412×915 |
-| `ipad-safari` | Safari 17 em iPadOS 18 | 1024×1366 |
 
 ---
 
 ## Limitações & honestidade
 
 1. **Não é silver bullet.** Anti-bot enterprise (Cloudflare BM, DataDome) detecta Camoufox via TLS/HTTP-2 fingerprint. Esta stack mira tracking publicitário e cadastros normais — não nações-estado, não Akamai-fronted login flows.
-2. **Tor é lento.** Em média 5–15s pra primeira requisição. Cloudflare desafia exit nodes. Se um site bloquear, alternativa é trocar `socks5://127.0.0.1:9050` por SOCKS de VPN paga (Mullvad, IVPN) no `ghost.sh` linha ~80.
-3. **User-Agents envelhecem.** Recalibre as strings em `spoof-browser.sh` a cada ~3 meses. Fonte boa: [jnrbsn.github.io/user-agents/user-agents.json](https://jnrbsn.github.io/user-agents/user-agents.json).
+2. **Tor é lento.** Em média 5–15s pra primeira requisição. Cloudflare desafia exit nodes. Se um site bloquear, troque por VPN própria: `PROXY=socks5://seu-vpn:1080 ./ghost.sh`.
+3. **User-Agents envelhecem.** O Camoufox/BrowserForge atualizam UAs automaticamente. Pra puxar o dataset mais recente: `source ~/.camoufox-venv/bin/activate && python -m camoufox fetch`.
 4. **Mullvad Browser e Tor Browser homogeneízam, não personificam.** Útil pra ler anonimamente, inútil pra cadastrar como "outro alguém".
-5. **WebRTC vaza IP local em modo `--no-proxy`.** Sempre que o Tor for desativado, considere que sua máquina está exposta como Linux normal.
+5. **WebRTC permanece bloqueado pelo Camoufox** (`block_webrtc=True`) mesmo com `PROXY=none`, mas DNS lookups vão pelo seu resolver local — sua máquina aparece como Linux normal para o ISP nesse modo.
 6. **Camoufox não emula iPhone/Android.** Documentação oficial só aceita `os="windows"|"macos"|"linux"`. Pra mobile coerente, alternativas pagas: GoLogin, Multilogin, AdsPower.
+
+---
+
+## Troubleshooting
+
+### Perfil persistente não abre depois de um crash / `kill -9`
+
+Firefox deixa um `parent.lock` (e/ou `.parentlock`) dentro do `user_data_dir`. Se você matou o processo no `kill -9` ou o sistema travou, o lock fica órfão e a próxima execução fica esperando.
+
+```bash
+# checar
+ls -la ~/.ghost-browser/profiles/<nome>/ | grep -i lock
+# limpar (com o ghost.sh fechado)
+rm -f ~/.ghost-browser/profiles/<nome>/parent.lock \
+      ~/.ghost-browser/profiles/<nome>/.parentlock
+```
+
+### Tor não sobe / `[!] Tor não responde em 127.0.0.1:9050`
+
+```bash
+# Linux
+sudo systemctl status tor
+sudo systemctl restart tor
+journalctl -u tor@default | tail -20
+
+# macOS
+brew services info tor
+brew services restart tor
+```
+
+Se o ISP está bloqueando Tor, use `PROXY=socks5://seu-vpn:1080 ./ghost.sh` com uma VPN.
+
+### `[!] PROXY inválido` mas o valor parece correto
+
+Confira os schemes aceitos: `tor`, `none`, `socks5://`, `http://`, `https://`. `socks4://` não é suportado pelo Playwright.
+
+### Camoufox `InvalidIP: Failed to get IP address` com proxy custom
+
+Significa que o proxy custom (VPN/SOCKS) não está respondendo. Teste manualmente:
+
+```bash
+curl -s --socks5-hostname <vpn-host>:<port> https://api.ipify.org
+```
+
+Se não retorna IP, o proxy está fora. Volte ao Tor (`PROXY=tor`) ou conserte o VPN.
 
 ---
 
