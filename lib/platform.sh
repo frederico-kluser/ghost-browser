@@ -280,3 +280,34 @@ ghost_tor_config_path() {
 ghost_tmp_prefix() {
     printf '%s\n' "${TMPDIR:-/tmp}"
 }
+
+# ============================================================
+# Proxy → flags de curl
+# ============================================================
+
+# Traduz uma PROXY_URL (no formato resolvido por ghost.sh) nos flags de curl
+# correspondentes, um por linha (consumir com mapfile-free `while read`).
+#   socks5://host:port  -> --socks5-hostname / host:port  (DNS via proxy, igual
+#                           ao teste de Tor em install.sh)
+#   http(s)://...        -> --proxy / <url>
+#   vazio                -> (nada — conexão direta)
+# Sempre retorna 0; quem chama decide o que fazer com a lista vazia.
+ghost_curl_proxy_args() {
+    local url="${1:-}"
+    case "$url" in
+        socks5://*)
+            printf '%s\n' "--socks5-hostname"
+            printf '%s\n' "${url#socks5://}"
+            ;;
+        http://*|https://*)
+            printf '%s\n' "--proxy"
+            printf '%s\n' "$url"
+            ;;
+        "")
+            : # direto, sem flags
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
