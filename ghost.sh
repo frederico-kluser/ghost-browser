@@ -19,6 +19,11 @@
 #            (descartável se vazio). OS é fixado na primeira vez.
 #   GHOST_OS windows | macos | linux. Força um OS específico (sem sorteio).
 #   USE_TOR  0 = alias de PROXY=none (compat com docs antigas)
+#   MAIL     1 = gera e-mail descartável e mostra os recebidos em tempo real
+#            no mesmo terminal (via ghost-mail.sh; usa o mesmo PROXY/perfil).
+#   GHOST_MAIL_POLL   intervalo de polling do e-mail em segundos (default 5)
+#   GHOST_MAIL_PROXY  override de proxy só pro e-mail (ex.: none se o exit
+#                     Tor estiver bloqueado pelo Cloudflare do mail.tm)
 #
 # Licença: MIT — veja LICENSE
 
@@ -33,8 +38,14 @@ VENV="$HOME/.camoufox-venv"
 # -------- cleanup robusto: INT, TERM, HUP, EXIT --------
 TMP=""
 PERSISTENT=0
+MAIL_PID=""
 cleanup() {
     local rc=$?
+    # Encerra o watcher de e-mail; o trap dele apaga a conta efêmera no mail.tm.
+    if [[ -n "$MAIL_PID" ]]; then
+        kill "$MAIL_PID" 2>/dev/null || true
+        wait "$MAIL_PID" 2>/dev/null || true
+    fi
     # Só apaga TMP se NÃO for perfil persistente.
     if [[ -n "$TMP" && -d "$TMP" && "$PERSISTENT" -eq 0 ]]; then
         rm -rf "$TMP"
@@ -185,6 +196,21 @@ else
 fi
 echo "[ghost] perfil  : $PROFILE_LABEL"
 echo "[ghost] URL     : $URL"
+
+# -------- e-mail descartável em tempo real (opt-in: MAIL=1) --------
+# Roda ghost-mail.sh em background reaproveitando o mesmo proxy e o mesmo
+# diretório de perfil; ele imprime o endereço e os e-mails no mesmo terminal.
+# cleanup() mata esse PID ao fechar o browser/Ctrl+C (e ele apaga a conta).
+if [[ "${MAIL:-0}" == "1" ]]; then
+    if [[ -f "$SCRIPT_DIR/ghost-mail.sh" ]]; then
+        GHOST_PROXY_URL="$PROXY_URL" GHOST_PROXY_RESOLVED=1 \
+        GHOST_MAIL_PROFILE="$TMP" GHOST_MAIL_PERSISTENT="$PERSISTENT" \
+            bash "$SCRIPT_DIR/ghost-mail.sh" &
+        MAIL_PID=$!
+    else
+        echo "[!] MAIL=1 mas ghost-mail.sh não encontrado — seguindo sem e-mail."
+    fi
+fi
 
 # -------- dispara Camoufox --------
 # shellcheck source=/dev/null

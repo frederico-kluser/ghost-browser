@@ -168,6 +168,17 @@ KEEP=trabalho ./ghost.sh https://gmail.com
 
 # cria identidade nova com OS escolhido manualmente
 KEEP=pessoal GHOST_OS=windows ./ghost.sh
+
+# + e-mail descartável: imprime o endereço e mostra os e-mails
+#   recebidos em tempo real NO MESMO terminal (útil pra código de verificação)
+MAIL=1 ./ghost.sh https://site.com/signup
+
+# e-mail persistente junto da identidade persistente (mesmo endereço sempre)
+MAIL=1 KEEP=trabalho ./ghost.sh https://gmail.com
+
+# se o exit Tor estiver bloqueado pelo Cloudflare do mail.tm, manda só o
+# e-mail direto (o navegador continua via Tor):
+MAIL=1 GHOST_MAIL_PROXY=none ./ghost.sh https://site.com/signup
 ```
 
 ### Variáveis de ambiente
@@ -178,6 +189,13 @@ KEEP=pessoal GHOST_OS=windows ./ghost.sh
 | `KEEP` | qualquer nome `[A-Za-z0-9_-]+` | Salva o perfil em `~/.ghost-browser/profiles/<nome>/`. OS é fixado na primeira vez. Sem `KEEP`, o perfil é descartado no fim. |
 | `GHOST_OS` | `windows` \| `macos` \| `linux` (aceita maiúsculas; é normalizado para lowercase) | Força um OS específico (sem sorteio). Combinado com `KEEP`, fixa o OS persistente. |
 | `USE_TOR` (legado) | `0` | Alias de `PROXY=none`. Mantido por compat com docs antigas. |
+| `MAIL` | `1` | Gera um e-mail descartável (mail.tm) e mostra os recebidos em tempo real no mesmo terminal. Usa o mesmo `PROXY` e o mesmo perfil do navegador. Com `KEEP`, o endereço persiste entre sessões; sem `KEEP`, a conta é apagada no exit. |
+| `GHOST_MAIL_POLL` | segundos (default `5`, mínimo `2`) | Intervalo de checagem da caixa de entrada. |
+| `GHOST_MAIL_PROXY` | `tor` \| `none` \| `socks5://...` \| `http(s)://...` | Override de proxy **só pro e-mail** (o navegador segue no `PROXY`). Use `none` se o exit Tor estiver bloqueado pelo Cloudflare do mail.tm. |
+
+> **E-mail descartável (`MAIL=1`):** o endereço é criado no [mail.tm](https://mail.tm) — serviço **gratuito, sem API key e sem cadastro** (rate limit 8 req/s). _Inbox by mail.tm._ Como qualquer serviço de e-mail temporário, **não use para nada sensível**: as mensagens são públicas pra quem souber o endereço. Conta efêmera é deletada ao fechar o navegador / Ctrl+C.
+
+> **Tor × Cloudflare no mail.tm:** o `MAIL=1` roteia as chamadas pelo mesmo Tor do navegador (consistência de IP). Exit nodes Tor às vezes levam desafio do Cloudflare e a criação da caixa falha — o `ghost-mail.sh` avisa e segue **sem derrubar o navegador**. Soluções: `./new-tor-circuit.sh` (troca o exit) ou `MAIL=1 GHOST_MAIL_PROXY=none ./ghost.sh ...` (e-mail direto, navegador ainda via Tor).
 
 > **Schemes de proxy aceitos:** `socks5://`, `http://`, `https://`. O Playwright (engine do Camoufox) não suporta `socks4://` oficialmente — usar `socks4://` resulta em erro do Camoufox.
 
@@ -188,6 +206,7 @@ KEEP=pessoal GHOST_OS=windows ./ghost.sh
 ### Helpers
 
 - **`./new-tor-circuit.sh`** — força IP novo entre execuções. Já é chamado pelo `ghost.sh` quando o proxy é Tor. Pra rodar standalone, abra `ControlPort 9051` no torrc (caminho depende do S.O. — Linux: `/etc/tor/torrc`; macOS: `$(brew --prefix)/etc/tor/torrc`). Veja a seção "Configuração do ControlPort do Tor" acima.
+- **`./ghost-mail.sh`** — e-mail descartável com leitura em tempo real, standalone (sem abrir navegador). Imprime o endereço e fica mostrando os e-mails recebidos. Aceita `PROXY`, `GHOST_MAIL_PROXY`, `GHOST_MAIL_POLL` e `KEEP` (endereço persistente, mesmo padrão de perfil do `ghost.sh`). Já é disparado automaticamente por `MAIL=1 ./ghost.sh`. _Inbox by mail.tm._
 
 ---
 
@@ -251,6 +270,7 @@ ghost-browser/
 │                          # também pergunta antes de apagar perfis persistentes em ~/.ghost-browser/
 ├── ghost.sh               # ★ super-comando: PROXY/KEEP/GHOST_OS via env, Camoufox+Tor por default
 ├── new-tor-circuit.sh     # força SIGNAL NEWNYM (ControlPort 9051) ou reload do serviço
+├── ghost-mail.sh          # e-mail descartável (mail.tm) + leitura em tempo real no terminal
 └── lib/platform.sh        # detecção de S.O. + distro + dispatch de package manager
                            # (apt/pacman/dnf/brew); bash 3.2 portable
 
